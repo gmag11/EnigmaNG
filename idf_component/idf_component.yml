@@ -1,0 +1,7 @@
+version: "1.0.0"
+description: "Secure ESP-NOW mesh network with IP transparency"
+url: "https://github.com/gmag11/EnigmaNG"
+dependencies:
+  idf:
+    version: ">=5.5.0"
+  espressif/QuickESPNow: "*"

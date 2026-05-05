@@ -1,20 +1,20 @@
 # Tareas: EnigmaNG v1.0
 
-## Progreso: 0/54 tareas completadas
+## Progreso: 51/74 tareas completadas
 
 ---
 
 ## Fase 0: Infraestructura del proyecto
 
-- [ ] Configurar PlatformIO con Arduino Core ESP32 3.3.8 + QuickESPNow
+- [x] Configurar PlatformIO con Arduino Core ESP32 3.3.8 + QuickESPNow
   - _Test: `pio run` sin errores de compilación_
 - [ ] Verificar compatibilidad de QuickESPNow con IDF 5.5.4
   - _Test: envío/recepción básico ESP-NOW en 2 ESP32 con QuickESPNow_
 - [ ] Test ESP-NOW básico: envío unicast/broadcast, obtención de RSSI por frame
   - _Test: 3 nodos, todos reciben broadcast, RSSI devuelto por QuickESPNow_
-- [ ] Crear estructura de directorios: `src/`, `arduino/`, `idf_component/`, `examples/`, `test/`
+- [x] Crear estructura de directorios: `src/`, `arduino/`, `idf_component/`, `examples/`, `test/`
   - _Test: `library.json` válido, PlatformIO lo reconoce como librería_
-- [ ] Configurar framework de tests (Unity en PlatformIO)
+- [x] Configurar framework de tests (Unity en PlatformIO)
   - _Test: test dummy pasa en `pio test`_
 
 ---
@@ -23,13 +23,13 @@
 
 **Spec:** `openspec/specs/physical-layer/spec.md`
 
-- [ ] Implementar `MeshPhysicalLayer` como wrapper sobre QuickESPNow
+- [x] Implementar `MeshPhysicalLayer` como wrapper sobre QuickESPNow
   - _Test: `begin(channel=6, networkId)` inicializa ESP-NOW correctamente_
-- [ ] Implementar `sendUnicast()` y `sendBroadcast()`
+- [x] Implementar `sendUnicast()` y `sendBroadcast()`
   - _Test: frame unicast llega solo al destinatario; broadcast a todos en el canal_
-- [ ] Implementar RSSI EWMA (α=0.3) con `PEER_INACTIVITY_TIMEOUT`
+- [x] Implementar RSSI EWMA (α=0.3) con `PEER_INACTIVITY_TIMEOUT`
   - _Test: 10 frames recibidos con RSSI conocido; verificar cálculo EWMA_
-- [ ] Implementar gestión de canal (`setChannel()`) y anuncio `CONTROL/CHANNEL_CHANGE`
+- [x] Implementar gestión de canal (`setChannel()`) y anuncio `CONTROL/CHANNEL_CHANGE`
   - _Test: 2 nodos cambian de canal sincronizados; retoman comunicación sin renegociar clave_
 
 ---
@@ -38,13 +38,13 @@
 
 **Spec:** `openspec/specs/link-layer/spec.md`
 
-- [ ] Implementar serializador/deserializador del header de 22 bytes
+- [x] Implementar serializador/deserializador del header de 22 bytes
   - _Test unitario: serializar y deserializar cada campo; verificar byte a byte_
-- [ ] Implementar enum `FrameType` (0x01–0x0F) y enum `Protocol` (0x00–0xFF)
+- [x] Implementar enum `FrameType` (0x01–0x0F) y enum `Protocol` (0x00–0xFF)
   - _Test: frame con NetworkID incorrecto descartado silenciosamente_
-- [ ] Implementar filtrado por NetworkID en recepción (descartar sin descifrar)
+- [x] Implementar filtrado por NetworkID en recepción (descartar sin descifrar)
   - _Test: 2 redes con misma PSK pero NetworkIDs distintos no se interfieren_
-- [ ] Implementar serialización de DATA_FRAG con header de fragmento (4B extra)
+- [x] Implementar serialización de DATA_FRAG con header de fragmento (4B extra)
   - _Test: fragmento correctamente identificado y encolado para reensamblaje_
 
 ---
@@ -53,19 +53,19 @@
 
 **Spec:** `openspec/specs/crypto/spec.md`
 
-- [ ] Integrar Curve25519 (mbedTLS) para generación de pares efímeros y ECDH
+- [x] Integrar Curve25519 (mbedTLS) para generación de pares efímeros y ECDH
   - _Test: X25519(privA, pubB) == X25519(privB, pubA)_
-- [ ] Implementar HKDF-SHA256 para NetworkKey, NetworkID y LinkKey
+- [x] Implementar HKDF-SHA256 para NetworkKey, NetworkID y LinkKey
   - _Test: misma PSK produce mismos NetworkKey/NetworkID en 2 nodos; LinkKey depende de MACs_
-- [ ] Implementar cifrado/descifrado AES-128-GCM con nonce derivado del header
+- [x] Implementar cifrado/descifrado AES-128-GCM con nonce derivado del header
   - _Test: cifrar y descifrar; verificar que campo Protocol está en AD y no puede alterarse_
 - [ ] Implementar handshake ECDH completo: HELLO → REPLY → CONFIRM × 2
   - _Test: 2 nodos con PSK correcta negocian LinkKey; nodo con PSK incorrecta falla en CONFIRM_
-- [ ] Implementar PeerManager con hash table de direccionamiento abierto
+- [x] Implementar PeerManager con hash table de direccionamiento abierto
   - _Test: insertar 20 peers, buscar por MAC en O(1) amortizado_
-- [ ] Implementar evicción LRU del PeerManager
+- [x] Implementar evicción LRU del PeerManager
   - _Test: forzar presión de heap; verificar que el peer con `lastSeen` más antiguo y `routeCount==0` es evictado_
-- [ ] Implementar anti-replay por `(peer, seq)` en recepción
+- [x] Implementar anti-replay por `(peer, seq)` en recepción
   - _Test: reenviar frame con `seq ≤ lastSeqRx` → descartado silenciosamente_
 
 ---
@@ -87,17 +87,17 @@
 
 **Spec:** `openspec/specs/routing/spec.md`
 
-- [ ] Implementar estructura `RouteEntry` y pool estático de 64 entradas
+- [x] Implementar estructura `RouteEntry` y pool estático de 64 entradas
   - _Test unitario: insertar, buscar por IP, actualizar TTL_
-- [ ] Implementar `ROUTE_ADV` con serialización de entradas (12B/entrada, 18 por frame)
+- [x] Implementar `ROUTE_ADV` con serialización de entradas (12B/entrada, 18 por frame)
   - _Test: ROUTE_ADV con 18 entradas ocupa exactamente 250 bytes_
-- [ ] Implementar recepción y actualización de tabla por ROUTE_ADV
+- [x] Implementar recepción y actualización de tabla por ROUTE_ADV
   - _Test: 3 nodos A–B–C; C aprende ruta a A vía B tras primer ROUTE_ADV de B_
-- [ ] Implementar Split Horizon y Poison Reverse
+- [x] Implementar Split Horizon y Poison Reverse
   - _Test: B no anuncia a A las rutas cuyo nextHop es A_
-- [ ] Implementar Seen-Frame Cache (32 entradas, buffer circular, TTL 10s)
+- [x] Implementar Seen-Frame Cache (32 entradas, buffer circular, TTL 10s)
   - _Test: frame recibido 2 veces con mismo (srcMac, seq) → segundo descartado_
-- [ ] Implementar triggered updates (RA inmediato al detectar cambio de topología)
+- [x] Implementar triggered updates (RA inmediato al detectar cambio de topología)
   - _Test: desconectar peer → RA triggered enviado en < 1s_
 
 ---
@@ -106,9 +106,9 @@
 
 **Spec:** `openspec/specs/routing/spec.md`
 
-- [ ] Implementar evicción de rutas (expiradas → mayor hopCount → menos reciente)
+- [x] Implementar evicción de rutas (expiradas → mayor hopCount → menos reciente)
   - _Test: tabla llena con 64 entradas; añadir nueva → la peor entrada es evictada_
-- [ ] Implementar `ROUTE_WITHDRAW` broadcast
+- [x] Implementar `ROUTE_WITHDRAW` broadcast
   - _Test: peer desaparece → ROUTE_WITHDRAW enviado → rutas eliminadas en vecinos_
 - [ ] Test de reconvergencia: 5 nodos, desconectar nodo central
   - _Test: reconvergencia completa en < 60s (2 intervalos RA de 30s)_
@@ -119,11 +119,11 @@
 
 **Spec:** `openspec/specs/ip-netif/spec.md`
 
-- [ ] Crear netif virtual `mesh0` con `esp_netif_new()` y driver custom
+- [x] Crear netif virtual `mesh0` con `esp_netif_new()` y driver custom
   - _Test: `mesh0` aparece en `esp_netif_get_handle_from_ifkey("MESH0")`_
-- [ ] Implementar path RX: frame DATA descifrado → `esp_netif_receive()`
+- [x] Implementar path RX: frame DATA descifrado → `esp_netif_receive()`
   - _Test: paquete IPv4 inyectado en `mesh0` recibido por socket UDP en el nodo_
-- [ ] Implementar path TX: `mesh_netif_output()` → buscar ruta → cifrar → send
+- [x] Implementar path TX: `mesh_netif_output()` → buscar ruta → cifrar → send
   - _Test: socket UDP en nodo A envía a IP de B; B recibe el paquete_
 - [ ] Configurar MTU=216 y lwipopts.h (TCP_MSS=176, TCP_WND=704, SACK off)
   - _Test: MSS negociado en handshake TCP = 176_
@@ -160,13 +160,13 @@
 
 **Spec:** `openspec/specs/onboarding/spec.md`
 
-- [ ] Implementar AP permanente de onboarding con SSID `ENIGMA-<NetworkID>-CH<canal>`
+- [x] Implementar AP permanente de onboarding con SSID `ENIGMA-<NetworkID>-CH<canal>`
   - _Test: SSID visible por WiFi scanner; contraseña = HMAC(PSK,"onboarding")[:8] hex_
 - [ ] Implementar servidor HTTP de provisioning (`GET /provision`)
   - _Test: nodo nuevo conecta al AP, hace GET /provision, recibe JSON correcto_
-- [ ] Implementar `JOIN_BEACON` broadcast cada 5s
+- [x] Implementar `JOIN_BEACON` broadcast cada 5s
   - _Test: nodo en búsqueda ciega recibe JOIN_BEACON en < 10s si está en el canal correcto_
-- [ ] Implementar búsqueda ciega de canal (escaneo 1→6→11→resto, 200ms/canal)
+- [x] Implementar búsqueda ciega de canal (escaneo 1→6→11→resto, 200ms/canal)
   - _Test: nodo configurado se reinicia; encuentra canal en < 30s_
 
 ---
@@ -175,13 +175,13 @@
 
 **Spec:** `openspec/specs/gateway/spec.md`
 
-- [ ] Implementar modo dual WiFi STA + ESP-NOW (single-chip)
+- [x] Implementar modo dual WiFi STA + ESP-NOW (single-chip)
   - _Test: gateway conectado a AP WiFi en canal 6; mesh opera en canal 6_
-- [ ] Implementar abstracción `MeshUplink` con `NativeWifiUplink`
+- [x] Implementar abstracción `MeshUplink` con `NativeWifiUplink`
   - _Test: uplink WiFi conectado; `isConnected()` devuelve true_
-- [ ] Implementar `ip_forward` entre `mesh0` y `wifi_sta` (o ip_napt según disponibilidad IDF)
+- [x] Implementar `ip_forward` entre `mesh0` y `wifi_sta` (o ip_napt según disponibilidad IDF)
   - _Test: nodo mesh hace HTTP GET a servidor en LAN → respuesta correcta_
-- [ ] Implementar NAT masquerade para tráfico Internet
+- [x] Implementar NAT masquerade para tráfico Internet
   - _Test: nodo mesh hace ping a 8.8.8.8 → respuesta recibida_
 - [ ] Implementar selección de gateway por métrica y redundancia
   - _Test: 2 gateways activos; nodo elige el de mejor métrica; si cae, migra al otro en < 60s_
@@ -192,13 +192,13 @@
 
 **Spec:** `openspec/specs/gateway/spec.md`
 
-- [ ] Implementar servidor `esp_http_server` con HTTP Digest Auth
+- [x] Implementar servidor `esp_http_server` con HTTP Digest Auth
   - _Test: GET `/` con credenciales incorrectas devuelve 401; correctas devuelve 200_
-- [ ] Implementar dashboard HTML mínimo (topología, nodos, rutas)
+- [x] Implementar dashboard HTML mínimo (topología, nodos, rutas)
   - _Test: navegador carga `/` correctamente_
-- [ ] Implementar endpoints JSON: `/api/v1/status`, `/nodes`, `/routes`, `/peers`
+- [x] Implementar endpoints JSON: `/api/v1/status`, `/nodes`, `/routes`, `/peers`
   - _Test: JSON válido, campos correctos_
-- [ ] Implementar endpoint `/metrics` en formato Prometheus
+- [x] Implementar endpoint `/metrics` en formato Prometheus
   - _Test: `curl http://<gw>/metrics` devuelve texto con métricas listadas en el spec_
 
 ---
@@ -207,13 +207,13 @@
 
 **Spec:** `openspec/specs/battery-nodes/spec.md`
 
-- [ ] Implementar ciclo WAKE → TX UPLINK → RX1 → RX2 → DEEP SLEEP
+- [x] Implementar ciclo WAKE → TX UPLINK → RX1 → RX2 → DEEP SLEEP
   - _Test: nodo cicla cada 60s (configurable); consume < 1mA promedio_
-- [ ] Implementar buffer downlink en Parent (FIFO, 5 msgs × 200B por hijo)
+- [x] Implementar buffer downlink en Parent (FIFO, 5 msgs × 200B por hijo)
   - _Test: 5 mensajes en buffer; nodo los recibe todos en ventanas RX tras UPLINK_
 - [ ] Implementar sincronización de reloj (timestamp del Parent en respuesta UPLINK)
   - _Test: `getMeshTime()` en nodo batería devuelve tiempo válido tras primer UPLINK_
-- [ ] Implementar lista de 3 candidatos a Parent en NVS
+- [x] Implementar lista de 3 candidatos a Parent en NVS
   - _Test: Parent primario desaparece; nodo recupera conexión vía candidato 2 sin re-join_
 - [ ] Verificar que nodo batería NO actúa como relay
   - _Test: frame de terceros recibido por nodo batería → descartado (no retransmitido)_
@@ -239,11 +239,11 @@
 
 **Spec:** `openspec/specs/service-discovery/spec.md`
 
-- [ ] Implementar `SERVICE_QUERY` / `SERVICE_REPLY` sobre mesh
+- [x] Implementar `SERVICE_QUERY` / `SERVICE_REPLY` sobre mesh
   - _Test: nodo consulta MQTT broker; gateway responde con IP:puerto en < 1s_
-- [ ] Implementar registros de servicios en ROUTE_ADV (campo opcional)
+- [x] Implementar registros de servicios en ROUTE_ADV (campo opcional)
   - _Test: servicio anunciado en RA visible en tabla de servicios local tras 30s_
-- [ ] Implementar bridge mDNS en gateway (republica servicios mesh hacia WiFi)
+- [x] Implementar bridge mDNS en gateway (republica servicios mesh hacia WiFi)
   - _Test: `avahi-browse` en dispositivo LAN descubre `_mqtt._tcp` del broker mesh_
 
 ---
@@ -252,17 +252,17 @@
 
 **Spec:** `openspec/specs/public-api/spec.md`
 
-- [ ] Finalizar `MeshNetwork.h` con API completa según spec
+- [x] Finalizar `MeshNetwork.h` con API completa según spec
   - _Test: compilación sin warnings en Arduino IDE y PlatformIO_
 - [ ] Implementar `getClient()` como wrapper `WiFiClient` sobre socket lwIP en mesh0
   - _Test: `PubSubClient` con `getClient()` conecta y publica en broker MQTT en LAN_
-- [ ] Crear ejemplo `BasicNode` (Arduino)
+- [x] Crear ejemplo `BasicNode` (Arduino)
   - _Test: flashear en ESP32; nodo aparece en Web UI del gateway_
-- [ ] Crear ejemplo `GatewaySingleChip` (Arduino)
+- [x] Crear ejemplo `GatewaySingleChip` (Arduino)
   - _Test: flashear en ESP32; AP onboarding visible; nodo BasicNode se conecta_
-- [ ] Crear ejemplo `BatteryNode` (Arduino)
+- [x] Crear ejemplo `BatteryNode` (Arduino)
   - _Test: nodo cicla cada 60s; consumo medido_
-- [ ] Crear ejemplo `gateway_hosted` (IDF nativo)
+- [x] Crear ejemplo `gateway_hosted` (IDF nativo)
   - _Test: compila con `idf.py build`; gateway funcional con placa slave ESP-Hosted_
-- [ ] Crear `library.json` y verificar compatibilidad con Arduino Library Manager
+- [x] Crear `library.json` y verificar compatibilidad con Arduino Library Manager
   - _Test: `pio lib install` desde el repositorio funciona_
