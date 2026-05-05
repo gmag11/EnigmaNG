@@ -1,0 +1,10 @@
+{
+    "name": "EnigmaNG-portable",
+    "version": "1.0.0",
+    "description": "Portable (native-compilable) subset of EnigmaNG for unit testing on PC",
+    "build": {
+        "srcDir": "../../src",
+        "includeDir": "../../src",
+        "srcFilter": "-<*> +<LinkLayer.cpp> +<PeerManager.cpp> +<Router.cpp> +<Crypto.cpp>"
+    }
+}
