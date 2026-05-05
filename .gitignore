@@ -1,3 +1,5 @@
 .github/prompts
 .github/skills
 .pio
+.vscode/c_cpp_properties.json
+.vscode/launch.json
