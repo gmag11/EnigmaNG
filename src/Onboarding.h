@@ -15,6 +15,10 @@ public:
     bool startProvisioningAP(const uint8_t* networkId, uint8_t channel, const char* psk);
     void stopProvisioningAP();
 
+    // Credentials of the running provisioning AP
+    const char* getProvisioningSSID()     const { return _apSSID; }
+    const char* getProvisioningPassword() const { return _apPassword; }
+
     // Gateway: send JOIN_BEACON periodically
     void sendJoinBeacon();
 
@@ -41,6 +45,8 @@ private:
     uint32_t _lastBeaconMs = 0;
     uint8_t _scanIndex = 0;
     uint32_t _scanStartMs = 0;
+    char _apSSID[32]     = {};
+    char _apPassword[17] = {};
 };
 
 #endif // MESH_ONBOARDING_H

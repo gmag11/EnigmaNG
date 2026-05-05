@@ -77,6 +77,7 @@ public:
     // Gateway-only
     bool startWebServer(uint16_t port = 80);
     bool startPrometheus(uint16_t port = 9090);
+    bool connectUplink(const char* ssid, const char* password);
     void setMqttBroker(const char* host, uint16_t port);
     bool setStaticIPTable(const std::vector<std::pair<String, IPAddress>>& table);
 
@@ -148,6 +149,9 @@ private:
     HandshakeContext* _allocHandshake(const uint8_t* mac);
     void _freeHandshake(const uint8_t* mac);
     void _initiateHandshake(const uint8_t* peerMac);
+
+    // Deferred web server start (triggered by WiFi AP_START event)
+    uint16_t _pendingWebPort = 0;
 
     // Periodic tasks
     void _sendRouteAdv();

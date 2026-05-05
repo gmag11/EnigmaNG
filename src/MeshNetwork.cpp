@@ -33,19 +33,53 @@ bool MeshNetwork::begin(const char* psk, IPAddress staticIP, MeshMode mode) {
                   _localMac[0], _localMac[1], _localMac[2],
                   _localMac[3], _localMac[4], _localMac[5]);
 
-    // Initialize WiFi (needed for ESP-NOW)
+    // Register event handlers BEFORE WiFi.mode() — AP_START fires during mode change
     if (mode == MESH_GATEWAY) {
-        WiFi.mode(WIFI_AP_STA);
+        Serial.println("[Mesh] Registering WiFi event handlers...");
+        WiFi.onEvent([](arduino_event_id_t, arduino_event_info_t) {
+            Serial.println("[Mesh] >>> ARDUINO_EVENT_WIFI_AP_START fired");
+            MeshNetwork* self = MeshNetwork::_instance;
+            if (!self || self->_pendingWebPort == 0) {
+                Serial.println("[Mesh]     (no pending web port, skipping httpd start)");
+                return;
+            }
+            uint16_t p = self->_pendingWebPort;
+            self->_pendingWebPort = 0;
+            if (self->_webUI.begin(p, "admin", "admin", self)) {
+                Serial.printf("[Mesh] Web UI started on port %d (via AP_START event)\n", p);
+            } else {
+                Serial.println("[Mesh] ERROR: httpd failed even after AP_START");
+            }
+        }, ARDUINO_EVENT_WIFI_AP_START);
+
+        // Log when a WiFi uplink connection is established
+        WiFi.onEvent([](arduino_event_id_t, arduino_event_info_t info) {
+            Serial.printf("[Mesh] WiFi uplink connected — IP: %s  GW: %s\n",
+                          IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str(),
+                          IPAddress(info.got_ip.ip_info.gw.addr).toString().c_str());
+        }, ARDUINO_EVENT_WIFI_STA_GOT_IP);
+        Serial.println("[Mesh] Event handlers registered");
+    }
+
+    // Initialize WiFi (needed for ESP-NOW)
+    Serial.println("[Mesh] Setting WiFi mode...");
+    if (mode == MESH_GATEWAY) {
+        bool ok = WiFi.mode(WIFI_AP_STA);
+        Serial.printf("[Mesh] WiFi.mode(WIFI_AP_STA) = %s\n", ok ? "OK" : "FAIL");
     } else {
-        WiFi.mode(WIFI_STA);
+        bool ok = WiFi.mode(WIFI_STA);
+        Serial.printf("[Mesh] WiFi.mode(WIFI_STA) = %s\n", ok ? "OK" : "FAIL");
     }
     WiFi.disconnect();
+    Serial.printf("[Mesh] WiFi status after disconnect: %d\n", (int)WiFi.status());
 
     // Initialize Physical Layer
+    Serial.println("[Mesh] Starting physical layer...");
     if (!_phy.begin(_channel, _keys.networkId)) {
         Serial.println("[Mesh] ERROR: Failed to initialize physical layer");
         return false;
     }
+    Serial.println("[Mesh] Physical layer OK");
 
     // Set receive callback
     _phy.onReceive(_onFrameReceived);
@@ -60,7 +94,8 @@ bool MeshNetwork::begin(const char* psk, IPAddress staticIP, MeshMode mode) {
     // Gateway: start onboarding AP
     if (mode == MESH_GATEWAY) {
         _onboarding.startProvisioningAP(_keys.networkId, _channel, _psk);
-        Serial.println("[Mesh] Onboarding AP started");
+        Serial.printf("[Mesh] Onboarding AP  SSID: %s\n", _onboarding.getProvisioningSSID());
+        Serial.printf("[Mesh] Onboarding AP  Pass: %s\n", _onboarding.getProvisioningPassword());
     }
 
     _connected = true;
@@ -95,7 +130,9 @@ void MeshNetwork::setMaxRoutes(uint16_t max) {
 
 void MeshNetwork::setChannel(uint8_t channel) {
     _channel = channel;
-    _phy.setChannel(channel);
+    if (_connected) {
+        _phy.setChannel(channel);
+    }
 }
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -135,7 +172,23 @@ void MeshNetwork::onNodeLeave(MeshNodeCallback cb) { _onLeaveCb = cb; }
 // ─── Gateway APIs ─────────────────────────────────────────────────────────────
 
 bool MeshNetwork::startWebServer(uint16_t port) {
-    return _webUI.begin(port, "admin", "admin", this);
+    // Try immediately (AP may already be fully up)
+    if (_webUI.begin(port, "admin", "admin", this)) return true;
+
+    // AP not ready yet — store port; the AP_START handler registered in begin() will fire it
+    _pendingWebPort = port;
+    Serial.printf("[Mesh] httpd deferred until AP ready (port %d)\n", port);
+    return true;
+}
+
+bool MeshNetwork::connectUplink(const char* ssid, const char* password) {
+    if (!ssid || ssid[0] == '\0') {
+        Serial.println("[Mesh] connectUplink: no SSID provided, skipping");
+        return false;
+    }
+    Serial.printf("[Mesh] Connecting WiFi uplink to '%s'...\n", ssid);
+    WiFi.begin(ssid, password);
+    return true;  // connection result arrives via ARDUINO_EVENT_WIFI_STA_GOT_IP
 }
 
 bool MeshNetwork::startPrometheus(uint16_t port) {

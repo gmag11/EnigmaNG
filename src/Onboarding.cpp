@@ -6,8 +6,7 @@
 
 bool Onboarding::startProvisioningAP(const uint8_t* networkId, uint8_t channel, const char* psk) {
     // Build SSID: ENIGMA-<NetworkID hex>-CH<channel>
-    char ssid[32];
-    snprintf(ssid, sizeof(ssid), ONBOARDING_SSID_PREFIX "%02X%02X-CH%d",
+    snprintf(_apSSID, sizeof(_apSSID), ONBOARDING_SSID_PREFIX "%02X%02X-CH%d",
              networkId[0], networkId[1], channel);
 
     // Password: HMAC(PSK, "onboarding")[:8] as hex
@@ -16,15 +15,26 @@ bool Onboarding::startProvisioningAP(const uint8_t* networkId, uint8_t channel, 
     mbedtls_md_hmac(md, (const uint8_t*)psk, strlen(psk),
                     (const uint8_t*)"onboarding", 10, hmacOut);
 
-    char password[17];
     for (int i = 0; i < 8; i++) {
-        snprintf(&password[i * 2], 3, "%02x", hmacOut[i]);
+        snprintf(&_apPassword[i * 2], 3, "%02x", hmacOut[i]);
     }
-    password[16] = '\0';
+    _apPassword[16] = '\0';
+
+    // Fix AP IP explicitly — required in WIFI_AP_STA mode on Arduino ESP32 3.x
+    bool cfgOk = WiFi.softAPConfig(
+        IPAddress(192, 168, 4, 1),
+        IPAddress(192, 168, 4, 1),
+        IPAddress(255, 255, 255, 0)
+    );
+    Serial.printf("[Onboarding] softAPConfig = %s\n", cfgOk ? "OK" : "FAIL");
 
     // Start SoftAP
-    WiFi.softAP(ssid, password, channel);
-    _apActive = true;
+    Serial.printf("[Onboarding] softAP(%s, ****, ch%d)...\n", _apSSID, channel);
+    bool apOk = WiFi.softAP(_apSSID, _apPassword, channel);
+    Serial.printf("[Onboarding] softAP = %s | AP IP: %s\n",
+                  apOk ? "OK" : "FAIL",
+                  WiFi.softAPIP().toString().c_str());
+    _apActive = apOk;
 
     return true;
 }
