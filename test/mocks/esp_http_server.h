@@ -26,6 +26,7 @@ typedef struct {
 typedef struct {
     uint16_t server_port;
     int      max_uri_handlers;
+    bool     lru_purge_enable;
 } httpd_config_t;
 
 #define HTTPD_DEFAULT_CONFIG() httpd_config_t{80, 8}
