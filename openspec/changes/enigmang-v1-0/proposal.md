@@ -2,7 +2,7 @@
 
 ## ¿Qué se va a construir?
 
-EnigmaNG es una librería Arduino/IDF para ESP32 que crea una red mesh segura sobre ESP-NOW con transparencia IP completa. Los nodos de la mesh pueden usar TCP/UDP estándar (MQTT, HTTP, etc.) como si estuviesen conectados a WiFi, sin modificar las librerías de aplicación.
+EnigmaNG es una librería Arduino/IDF para ESP32, compatible con PlatformIO, que crea una red mesh segura sobre ESP-NOW con transparencia IP completa. Los nodos de la mesh pueden usar TCP/UDP estándar (MQTT, HTTP, etc.) como si estuviesen conectados a WiFi, sin modificar las librerías de aplicación.
 
 ## ¿Por qué?
 
