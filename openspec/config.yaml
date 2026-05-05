@@ -1,0 +1,33 @@
+schema: spec-driven
+
+context: |
+  Project: EnigmaNG — Mesh networking library for ESP32/ESP8266 over ESP-NOW.
+  Primary target: Arduino Core ESP32 v3.3.8 (IDF 5.5.4).
+  Secondary target: ESP8266 (derived library, limited features).
+  Physical layer: QuickESPNow (author's own ESP-NOW abstraction).
+  Crypto: Curve25519 ECDH + HKDF-SHA256 + AES-128-GCM (mbedTLS, hardware-accelerated on ESP32).
+  IP stack: lwIP via esp_netif (virtual netif "mesh0", MTU=216 bytes).
+  Frame overhead: 22B header + 12B GCM tag = 34B. Payload: 216B.
+  Frame header fields: Magic(2) | Version(1) | NetworkID(2) | FrameType(1) | Protocol(1) | Epoch(1) | SrcMAC(6) | DstMAC(6) | Sequence(2).
+  Protocol field: EtherType-equivalent (0x00=MESH_INTERNAL, 0x01=PROTO_IPV4, 0x10=PROTO_ESPHOME, ...).
+  Routing: Distance Vector (RIPv2-like), proactive, split horizon + poison reverse + Seen-Frame Cache.
+  Key rotation: Epoch (1 byte) + KEY_NACK + immediate renegotiation (no overlap window).
+  Battery nodes: LoRaWAN Class A model (WAKE → TX UPLINK → RX1 → RX2 → DEEP SLEEP).
+  Gateway: WiFi STA+AP dual, routing LAN + NAT Internet, Web UI (esp_http_server + HTTP Digest Auth), Prometheus /metrics.
+  ESP8266: no relay, no IP stack — Proxy MQTT only.
+  Advanced gateway: ESP-Hosted-MCU dual-board (IDF native only, not Arduino).
+  ESPHome: future v1.x, Level 1 IP transparent via getClient() returning lwIP WiFiClient.
+  Language: C++, Arduino API where possible. Specs in Spanish (same as the main spec doc).
+  Reference spec: "EnigmaNG Specs v2.md" in the repository root.
+
+rules:
+  proposal:
+    - Keep proposals concise (under 600 words).
+    - Include a clear "No-goals" (fuera de alcance) section.
+  design:
+    - Reference section numbers from "EnigmaNG Specs v2.md" when citing decisions.
+    - Include data structure sizes in bytes where relevant.
+  tasks:
+    - Map tasks to the 12 phases defined in §15 of the spec.
+    - Each task must be independently testable.
+    - Include the test criterion for each task.

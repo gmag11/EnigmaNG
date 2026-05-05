@@ -1,0 +1,15 @@
+schema: spec-driven
+status: active
+created: 2026-05-05
+specs:
+  - physical-layer
+  - link-layer
+  - crypto
+  - routing
+  - ip-netif
+  - onboarding
+  - battery-nodes
+  - gateway
+  - esp8266
+  - service-discovery
+  - public-api
