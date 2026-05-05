@@ -5,6 +5,6 @@
     "build": {
         "srcDir": "../../src",
         "includeDir": "../../src",
-        "srcFilter": "-<*> +<LinkLayer.cpp> +<PeerManager.cpp> +<Router.cpp> +<Crypto.cpp>"
+        "srcFilter": "-<*> +<LinkLayer.cpp> +<PeerManager.cpp> +<Router.cpp> +<Crypto.cpp> +<Fragmentation.cpp> +<ServiceDiscovery.cpp>"
     }
 }
