@@ -20,6 +20,8 @@ struct PeerEntry {
     uint8_t  routeCount;      // Number of routes through this peer
     bool     valid;
     bool     keyEstablished;  // Handshake complete
+    bool     isBattery;       // Peer declared MESH_BATTERY mode in JOIN_BEACON
+    uint32_t sleepIntervalMs; // Declared sleep interval (ms); 0 = unknown
 };
 
 class PeerManager {

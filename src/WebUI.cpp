@@ -344,9 +344,14 @@ esp_err_t WebUI::_handleTopology(httpd_req_t* req) {
     size_t pos = 0;
     buf[pos++] = '[';
 
+    const uint8_t* localMac = mesh->getMAC();
+
     for (size_t i = 0; i < routeCount; i++) {
         RouteEntry* r = router.getRouteByIndex(i);
         if (!r || !r->valid) continue;
+
+        // Skip the gateway's own entry (learned via route adv reflection)
+        if (memcmp(r->destMac, localMac, 6) == 0) continue;
 
         // Get RSSI for direct peers
         float rssi = 0;

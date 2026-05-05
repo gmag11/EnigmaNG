@@ -47,105 +47,99 @@ bool Crypto::deriveLinkKey(const uint8_t* sharedSecret, const char* psk,
 }
 
 bool Crypto::generateKeyPair(uint8_t* publicKey, uint8_t* privateKey) {
-    mbedtls_entropy_context entropy;
+    mbedtls_entropy_context  entropy;
     mbedtls_ctr_drbg_context ctr_drbg;
+    mbedtls_ecdh_context     ctx;
 
     mbedtls_entropy_init(&entropy);
     mbedtls_ctr_drbg_init(&ctr_drbg);
+    mbedtls_ecdh_init(&ctx);
+
+    bool ok = false;
 
     const char* pers = "enigmang_ecdh";
     int ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy,
                                      (const uint8_t*)pers, strlen(pers));
-    if (ret != 0) {
-        mbedtls_ctr_drbg_free(&ctr_drbg);
-        mbedtls_entropy_free(&entropy);
-        return false;
-    }
+    if (ret != 0) goto cleanup;
 
-    // Generate random private key (32 bytes)
-    ret = mbedtls_ctr_drbg_random(&ctr_drbg, privateKey, MESH_ECDH_KEY_SIZE);
-    if (ret != 0) {
-        mbedtls_ctr_drbg_free(&ctr_drbg);
-        mbedtls_entropy_free(&entropy);
-        return false;
-    }
+    ret = mbedtls_ecdh_setup(&ctx, MBEDTLS_ECP_DP_CURVE25519);
+    if (ret != 0) goto cleanup;
 
-    // Clamp private key for Curve25519
-    privateKey[0] &= 248;
-    privateKey[31] &= 127;
-    privateKey[31] |= 64;
+    // Generate random private key AND compute matching public key
+    ret = mbedtls_ecdh_gen_public(
+        &ctx.MBEDTLS_PRIVATE(ctx).MBEDTLS_PRIVATE(mbed_ecdh).MBEDTLS_PRIVATE(grp),
+        &ctx.MBEDTLS_PRIVATE(ctx).MBEDTLS_PRIVATE(mbed_ecdh).MBEDTLS_PRIVATE(d),
+        &ctx.MBEDTLS_PRIVATE(ctx).MBEDTLS_PRIVATE(mbed_ecdh).MBEDTLS_PRIVATE(Q),
+        mbedtls_ctr_drbg_random, &ctr_drbg);
+    if (ret != 0) goto cleanup;
 
-    // Compute public key = privateKey * basepoint
-    // Using mbedtls_ecdh for X25519
-    mbedtls_ecdh_context ctx;
-    mbedtls_ecdh_init(&ctx);
-    mbedtls_ecdh_setup(&ctx, MBEDTLS_ECP_DP_CURVE25519);
+    // Export private key (32 bytes)
+    ret = mbedtls_mpi_write_binary(
+        &ctx.MBEDTLS_PRIVATE(ctx).MBEDTLS_PRIVATE(mbed_ecdh).MBEDTLS_PRIVATE(d),
+        privateKey, MESH_ECDH_KEY_SIZE);
+    if (ret != 0) goto cleanup;
 
-    ret = mbedtls_mpi_read_binary(&ctx.MBEDTLS_PRIVATE(ctx).MBEDTLS_PRIVATE(mbed_ecdh).MBEDTLS_PRIVATE(d), privateKey, MESH_ECDH_KEY_SIZE);
-    if (ret != 0) {
-        mbedtls_ecdh_free(&ctx);
-        mbedtls_ctr_drbg_free(&ctr_drbg);
-        mbedtls_entropy_free(&entropy);
-        return false;
-    }
+    // Export public key u-coordinate (32 bytes, Curve25519)
+    ret = mbedtls_mpi_write_binary(
+        &ctx.MBEDTLS_PRIVATE(ctx).MBEDTLS_PRIVATE(mbed_ecdh).MBEDTLS_PRIVATE(Q).MBEDTLS_PRIVATE(X),
+        publicKey, MESH_ECDH_KEY_SIZE);
+    ok = (ret == 0);
 
-    size_t olen = 0;
-    uint8_t buf[32];
-    ret = mbedtls_ecdh_calc_secret(&ctx, &olen, buf, sizeof(buf),
-                                    mbedtls_ctr_drbg_random, &ctr_drbg);
-
-    // For Curve25519, public key generation is simpler - use raw X25519
-    // Fallback: use esp_crypto API or direct Curve25519 basepoint multiplication
-    // This will be refined when testing on hardware
-
+cleanup:
     mbedtls_ecdh_free(&ctx);
     mbedtls_ctr_drbg_free(&ctr_drbg);
     mbedtls_entropy_free(&entropy);
-
-    // TODO: Proper Curve25519 public key computation via mbedtls
-    // For now, mark as needing hardware validation
-    return true;
+    return ok;
 }
 
 bool Crypto::computeSharedSecret(const uint8_t* privateKey, const uint8_t* peerPublicKey,
                                  uint8_t* sharedSecretOut) {
-    // X25519(privA, pubB) = shared secret
-    // Using mbedtls ECDH context for Curve25519
-    mbedtls_ecdh_context ctx;
-    mbedtls_ecdh_init(&ctx);
-    mbedtls_ecdh_setup(&ctx, MBEDTLS_ECP_DP_CURVE25519);
-
-    // Load our private key
-    int ret = mbedtls_mpi_read_binary(&ctx.MBEDTLS_PRIVATE(ctx).MBEDTLS_PRIVATE(mbed_ecdh).MBEDTLS_PRIVATE(d),
-                                       privateKey, MESH_ECDH_KEY_SIZE);
-    if (ret != 0) {
-        mbedtls_ecdh_free(&ctx);
-        return false;
-    }
-
-    // Load peer's public key
-    ret = mbedtls_mpi_read_binary(&ctx.MBEDTLS_PRIVATE(ctx).MBEDTLS_PRIVATE(mbed_ecdh).MBEDTLS_PRIVATE(Qp).MBEDTLS_PRIVATE(X),
-                                   peerPublicKey, MESH_ECDH_KEY_SIZE);
-    if (ret != 0) {
-        mbedtls_ecdh_free(&ctx);
-        return false;
-    }
-
-    mbedtls_entropy_context entropy;
+    mbedtls_entropy_context  entropy;
     mbedtls_ctr_drbg_context ctr_drbg;
+    mbedtls_ecdh_context     ctx;
+
     mbedtls_entropy_init(&entropy);
     mbedtls_ctr_drbg_init(&ctr_drbg);
-    mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, NULL, 0);
+    mbedtls_ecdh_init(&ctx);
 
-    size_t olen = 0;
-    ret = mbedtls_ecdh_calc_secret(&ctx, &olen, sharedSecretOut, MESH_ECDH_KEY_SIZE,
-                                    mbedtls_ctr_drbg_random, &ctr_drbg);
+    bool ok = false;
 
+    int ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, NULL, 0);
+    if (ret != 0) goto cleanup;
+
+    ret = mbedtls_ecdh_setup(&ctx, MBEDTLS_ECP_DP_CURVE25519);
+    if (ret != 0) goto cleanup;
+
+    // Load our private key
+    ret = mbedtls_mpi_read_binary(
+        &ctx.MBEDTLS_PRIVATE(ctx).MBEDTLS_PRIVATE(mbed_ecdh).MBEDTLS_PRIVATE(d),
+        privateKey, MESH_ECDH_KEY_SIZE);
+    if (ret != 0) goto cleanup;
+
+    // Load peer's public key (u-coordinate)
+    ret = mbedtls_mpi_read_binary(
+        &ctx.MBEDTLS_PRIVATE(ctx).MBEDTLS_PRIVATE(mbed_ecdh).MBEDTLS_PRIVATE(Qp).MBEDTLS_PRIVATE(X),
+        peerPublicKey, MESH_ECDH_KEY_SIZE);
+    if (ret != 0) goto cleanup;
+
+    // Z = 1 — required for affine coordinates, mbedtls rejects the point otherwise
+    ret = mbedtls_mpi_lset(
+        &ctx.MBEDTLS_PRIVATE(ctx).MBEDTLS_PRIVATE(mbed_ecdh).MBEDTLS_PRIVATE(Qp).MBEDTLS_PRIVATE(Z),
+        1);
+    if (ret != 0) goto cleanup;
+
+    {
+        size_t olen = 0;
+        ret = mbedtls_ecdh_calc_secret(&ctx, &olen, sharedSecretOut, MESH_ECDH_KEY_SIZE,
+                                        mbedtls_ctr_drbg_random, &ctr_drbg);
+        ok = (ret == 0 && olen == MESH_ECDH_KEY_SIZE);
+    }
+
+cleanup:
     mbedtls_ecdh_free(&ctx);
     mbedtls_ctr_drbg_free(&ctr_drbg);
     mbedtls_entropy_free(&entropy);
-
-    return (ret == 0 && olen == MESH_ECDH_KEY_SIZE);
+    return ok;
 }
 
 bool Crypto::encrypt(const uint8_t* key, const uint8_t* nonce,

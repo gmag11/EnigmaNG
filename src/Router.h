@@ -18,6 +18,13 @@
 #define ROUTE_ADV_MAX_ENTRIES       18      // Max entries per frame (18 × 12 = 216)
 #define SEEN_FRAME_TTL_MS           10000   // 10s
 
+// Peer timeout constants
+// Normal nodes: 3 × ROUTE_ADV_INTERVAL = 90s  (3 missed RAs)
+// Battery nodes: use their declared sleep interval × 3 + 60s margin
+#define PEER_TIMEOUT_NORMAL_MS      90000UL          // 90s
+#define PEER_TIMEOUT_BATTERY_MIN_MS 120000UL         // 120s minimum for battery nodes
+#define PEER_TIMEOUT_BATTERY_FACTOR 3                // multiplier over sleep interval
+
 // Route entry: ~25 bytes
 struct RouteEntry {
     IPAddress destIP;        // 4 bytes
@@ -51,7 +58,9 @@ public:
 
     // ROUTE_ADV serialization (12 bytes per entry)
     size_t serializeRouteAdv(uint8_t* buf, size_t bufLen, const uint8_t* excludeNextHop);
-    size_t deserializeRouteAdv(const uint8_t* buf, size_t len, const uint8_t* fromMac);
+    size_t deserializeRouteAdv(const uint8_t* buf, size_t len,
+                               const uint8_t* fromMac,
+                               const uint8_t* localMac = nullptr);
 
     // ROUTE_WITHDRAW
     void handleRouteWithdraw(const uint8_t* destMac);

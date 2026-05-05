@@ -127,6 +127,7 @@ private:
     uint32_t _lastRouteAdvMs = 0;
     uint32_t _lastBeaconMs = 0;
     uint32_t _lastPeerCheckMs = 0;
+    uint32_t _sleepIntervalSec = 0;  // For MESH_BATTERY mode, announced in JOIN_BEACON
 
     // Internal frame handling
     static void _onFrameReceived(const uint8_t* srcMac, const uint8_t* data, size_t len, int8_t rssi);
@@ -136,6 +137,7 @@ private:
     void _handleKeyExchReply(const uint8_t* srcMac, const uint8_t* payload, size_t len);
     void _handleKeyExchConfirm(const uint8_t* srcMac, const uint8_t* payload, size_t len);
     void _handleRouteAdv(const uint8_t* srcMac, const uint8_t* payload, size_t len);
+    void _handleRouteWithdraw(const uint8_t* payload, size_t len);
     void _handleData(const uint8_t* srcMac, const MeshFrameHeader& hdr, const uint8_t* payload, size_t len);
 
     // Frame sending

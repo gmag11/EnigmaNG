@@ -66,8 +66,39 @@ Un relay descarta el frame si `(srcMac, seq)` está en la caché (`SEEN_FRAME_TT
 
 ## Route Withdraw
 
-- Si peer no responde en `PEER_TIMEOUT` (3600s nodos normales; `3 × HEARTBEAT_INTERVAL` nodos batería): enviar `ROUTE_WITHDRAW` broadcast con la MAC del peer caído.
-- Optimización: solo enviar si el peer era `nextHop` de alguna ruta activa.
+### Timeout y detección de caída
+
+| Tipo de nodo | Timeout | Razón |
+|---|---|---|
+| Normal | 90s (`3 × RA_INTERVAL`) | 3 ROUTE_ADV perdidos |
+| Batería | `max(3 × sleepInterval + 60s, 120s)` | Puede estar dormido legítimamente |
+
+El `sleepInterval` lo anuncia el propio nodo batería en el campo extra del `JOIN_BEACON` (bytes 6–9, `uint32_t` en segundos). Si el vecino no ha recibido ese campo, se aplica el mínimo de 120s.
+
+### Comportamiento al expirar
+
+Cuando `_checkPeerTimeouts()` detecta un peer expirado:
+1. Elimina rutas locales hacia/a través de ese peer (`handleRouteWithdraw(mac)`).
+2. Invoca el callback `onNodeLeave`.
+3. **Emite `ROUTE_WITHDRAW` broadcast** con payload = 6 bytes MAC del peer perdido.
+
+### Recepción de ROUTE_WITHDRAW
+
+Al recibir un `ROUTE_WITHDRAW`:
+1. Si la MAC del payload coincide con la propia MAC → ignorar.
+2. Si no hay rutas hacia esa MAC → ignorar (ya convergió, no retransmitir).
+3. Si hay rutas → eliminarlas y disparar `onNodeLeave` si era peer directo.
+
+> **Nota:** No se retransmite el `ROUTE_WITHDRAW` recibido. La difusión original alcanza
+> a todos los nodos en rango directo del emisor. Los nodos que solo lo conocen por rutas
+> multi-hop convergirán por expiración de ruta (máx. 90s adicionales).
+
+### JOIN_BEACON extendido para nodos batería
+
+```
+[channel: 1B][localIP: 4B][mode: 1B][sleepIntervalSec: 4B — solo si mode==MESH_BATTERY]
+```
+Los vecinos leen este campo al recibir beacons y actualizan `PeerEntry.sleepIntervalMs`.
 
 ## Control de memoria
 

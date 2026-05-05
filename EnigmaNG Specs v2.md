@@ -481,8 +481,36 @@ Un relay descarta el frame si `(srcMac, seq)` está en la caché (recibido en lo
 
 ### 6.5 Route Withdraw
 
-- Si un peer no responde en `PEER_TIMEOUT` (3600s para nodos normales, `3 × HEARTBEAT_INTERVAL` para nodos batería), se envía `ROUTE_WITHDRAW` broadcast con la MAC del peer caído.
-- Optimización: solo enviar si el peer era `nextHop` de alguna ruta activa.
+#### Timeouts por tipo de nodo
+
+| Tipo | Timeout | Razón |
+|---|---|---|
+| Normal | 90s (`3 × RA_INTERVAL`) | 3 ROUTE_ADV consecutivos perdidos |
+| Batería | `max(3 × sleepInterval + 60s, 120s)` | El nodo puede estar en deep sleep legítimamente |
+
+El `sleepInterval` lo anuncia el propio nodo batería en el campo extra del `JOIN_BEACON`:
+
+```
+[channel: 1B][localIP: 4B][mode: 1B][sleepIntervalSec: 4B — solo si mode==MESH_BATTERY]
+```
+
+Los vecinos leen este campo y lo almacenan en `PeerEntry.sleepIntervalMs` para calcular su propio timeout dinámico.
+
+#### Comportamiento al detectar caída
+
+Cuando `_checkPeerTimeouts()` expira un peer:
+1. Elimina rutas locales (`handleRouteWithdraw(mac)`).
+2. Invoca el callback `onNodeLeave`.
+3. **Emite `ROUTE_WITHDRAW` broadcast** (payload = 6 bytes MAC del peer caído), permitiendo que todos los vecinos directos converjan en < 1s en lugar de esperar hasta 90s.
+
+#### Recepción de ROUTE_WITHDRAW
+
+Al recibir un `ROUTE_WITHDRAW`:
+1. MAC del payload == MAC propia → ignorar.
+2. Sin rutas hacia esa MAC → ignorar (ya convergió; no se retransmite para evitar tormentas).
+3. Con rutas → eliminarlas y disparar `onNodeLeave` si era peer directo.
+
+> **Convergencia multi-hop:** El `ROUTE_WITHDRAW` alcanza a los vecinos directos del nodo que detectó la caída. Los nodos más lejanos convergen por expiración de ruta (máx. 90s adicionales). Para redes > 3 hops se puede habilitar retransmisión controlada en una futura versión.
 
 ---
 
@@ -1078,7 +1106,7 @@ enum MeshMode : uint8_t {
 ### Fase 5: Routing Multi-hop y Withdraw (1 semana)
 
 - [ ] Tabla con pool estático y evicción.
-- [ ] ROUTE_WITHDRAW y triggered updates.
+- [x] ROUTE_WITHDRAW y triggered updates.
 - [ ] Test: 5 nodos, desconectar nodo central, verificar reconvergencia (< 60s).
 
 ### Fase 6: Interfaz IP Virtual (netif) (2 semanas)

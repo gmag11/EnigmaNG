@@ -8,14 +8,17 @@ Router::Router() {
 
 RouteEntry* Router::addRoute(IPAddress destIP, const uint8_t* destMac,
                              const uint8_t* nextHopMac, uint8_t hopCount) {
-    // Check if route already exists - update it
     RouteEntry* existing = findRouteByIP(destIP);
     if (existing) {
-        // Update if better or same nextHop
+        // Never overwrite a direct route (hopCount==1) with a worse one
+        if (existing->hopCount == 1 && memcmp(existing->nextHopMac, nextHopMac, 6) != 0) {
+            return existing;
+        }
+        // Update only if better, or same next-hop (refresh)
         if (hopCount < existing->hopCount || memcmp(existing->nextHopMac, nextHopMac, 6) == 0) {
             memcpy(existing->nextHopMac, nextHopMac, 6);
             existing->hopCount = hopCount;
-            existing->metric = hopCount; // Simple metric for now
+            existing->metric = hopCount;
             existing->lastUpdated = millis();
             _topologyChanged = true;
         }
@@ -128,7 +131,9 @@ size_t Router::serializeRouteAdv(uint8_t* buf, size_t bufLen, const uint8_t* exc
     return offset;
 }
 
-size_t Router::deserializeRouteAdv(const uint8_t* buf, size_t len, const uint8_t* fromMac) {
+size_t Router::deserializeRouteAdv(const uint8_t* buf, size_t len,
+                                   const uint8_t* fromMac,
+                                   const uint8_t* localMac) {
     size_t count = 0;
     size_t entries = len / ROUTE_ADV_ENTRY_SIZE;
 
@@ -142,10 +147,12 @@ size_t Router::deserializeRouteAdv(const uint8_t* buf, size_t len, const uint8_t
         uint8_t destMac[6];
         memcpy(destMac, &buf[offset + 4], 6);
 
+        // Never install a route to ourselves
+        if (localMac && memcmp(destMac, localMac, 6) == 0) continue;
+
         uint8_t hopCount = buf[offset + 10];
 
         if (hopCount >= 16) {
-            // Infinity — remove route if we learned it from this neighbor
             RouteEntry* existing = findRouteByIP(destIP);
             if (existing && memcmp(existing->nextHopMac, fromMac, 6) == 0) {
                 removeRoute(destIP);

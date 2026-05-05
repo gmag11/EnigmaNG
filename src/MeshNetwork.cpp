@@ -114,6 +114,7 @@ void MeshNetwork::setRelayEnabled(bool enabled) { _relayEnabled = enabled; }
 void MeshNetwork::setBatteryMode(bool enabled, uint32_t sleepIntervalSec) {
     _mode = enabled ? MESH_BATTERY : MESH_NODE;
     _relayEnabled = !enabled;
+    _sleepIntervalSec = enabled ? sleepIntervalSec : 0;
 }
 
 void MeshNetwork::setRssiThreshold(int8_t connectDbm, int8_t disconnectDbm) {
@@ -301,6 +302,9 @@ void MeshNetwork::_handleFrame(const uint8_t* srcMac, const uint8_t* data, size_
         case FrameType::ROUTE_ADV:
             _handleRouteAdv(hdr.srcMac, payload, payloadLen);
             break;
+        case FrameType::ROUTE_WITHDRAW:
+            _handleRouteWithdraw(payload, payloadLen);
+            break;
         case FrameType::DATA:
             _handleData(hdr.srcMac, hdr, payload, payloadLen);
             break;
@@ -322,6 +326,18 @@ void MeshNetwork::_handleJoinBeacon(const uint8_t* srcMac, const uint8_t* payloa
     } else {
         // Refresh lastSeen
         peer->lastSeen = millis();
+
+        // Update battery/sleep metadata from beacon payload
+        // Payload: channel(1) + localIP(4) + mode(1) [+ sleepIntervalSec(4) if battery]
+        if (len >= 6) {
+            uint8_t mode = payload[5];
+            peer->isBattery = (mode == (uint8_t)MESH_BATTERY);
+        }
+        if (peer->isBattery && len >= 10) {
+            uint32_t sleepSec;
+            memcpy(&sleepSec, payload + 6, 4);
+            peer->sleepIntervalMs = sleepSec * 1000UL;
+        }
     }
 }
 
@@ -514,7 +530,35 @@ void MeshNetwork::_handleRouteAdv(const uint8_t* srcMac, const uint8_t* payload,
     }
 
     // Deserialize route entries from this neighbor
-    _router.deserializeRouteAdv(payload, len, srcMac);
+    _router.deserializeRouteAdv(payload, len, srcMac, _localMac);
+}
+
+void MeshNetwork::_handleRouteWithdraw(const uint8_t* payload, size_t len) {
+    if (len < 6) return;
+
+    // Payload: 6-byte MAC of the lost peer
+    const uint8_t* lostMac = payload;
+
+    // Never process a withdraw for ourselves
+    if (memcmp(lostMac, _localMac, 6) == 0) return;
+
+    // Check if we have routes through or to this MAC
+    RouteEntry* existing = _router.findRouteByMac(lostMac);
+    if (!existing) return;  // Already gone, don't relay
+
+    Serial.printf("[Mesh] ROUTE_WITHDRAW received for %02X:%02X:%02X:%02X:%02X:%02X\n",
+                  lostMac[0], lostMac[1], lostMac[2],
+                  lostMac[3], lostMac[4], lostMac[5]);
+
+    _router.handleRouteWithdraw(lostMac);
+
+    // Also remove as direct peer if present
+    PeerEntry* peer = _peerMgr.findPeer(lostMac);
+    if (peer) {
+        IPAddress peerIP(10, 200, lostMac[4], lostMac[5]);
+        if (_onLeaveCb) _onLeaveCb(lostMac, peerIP);
+        _peerMgr.removePeer(lostMac);
+    }
 }
 
 void MeshNetwork::_handleData(const uint8_t* srcMac, const MeshFrameHeader& hdr,
@@ -579,44 +623,89 @@ bool MeshNetwork::_sendBroadcastFrame(FrameType type, Protocol proto,
 // ─── Periodic Tasks ───────────────────────────────────────────────────────────
 
 void MeshNetwork::_sendJoinBeacon() {
-    // Beacon payload: channel(1) + localIP(4) + mode(1) = 6 bytes
-    uint8_t payload[6];
+    // Payload: channel(1) + localIP(4) + mode(1)
+    // Battery nodes append sleepIntervalSec(4) so neighbors know their timeout
+    uint8_t payload[10];
     payload[0] = _channel;
     uint32_t ip = (uint32_t)_localIP;
     memcpy(&payload[1], &ip, 4);
     payload[5] = (uint8_t)_mode;
 
-    _sendBroadcastFrame(FrameType::JOIN_BEACON, Protocol::MESH_INTERNAL, payload, sizeof(payload));
+    size_t payloadLen = 6;
+    if (_mode == MESH_BATTERY) {
+        // _sleepIntervalSec is set via setBatteryMode()
+        uint32_t sleepSec = _sleepIntervalSec;
+        memcpy(&payload[6], &sleepSec, 4);
+        payloadLen = 10;
+    }
+
+    _sendBroadcastFrame(FrameType::JOIN_BEACON, Protocol::MESH_INTERNAL, payload, payloadLen);
 }
 
 void MeshNetwork::_sendRouteAdv() {
-    if (_peerMgr.getPeerCount() == 0) return;
+    size_t peerCount = _peerMgr.getPeerCount();
+    if (peerCount == 0) return;
 
-    uint8_t buf[216]; // Max payload
-    size_t len = _router.serializeRouteAdv(buf, sizeof(buf), nullptr);
-    if (len == 0) return;
+    // Send unicast to each peer with Split Horizon + Poison Reverse:
+    // routes learned FROM that peer are advertised back with hopCount=16 (infinity)
+    for (size_t p = 0; p < peerCount; p++) {
+        PeerEntry* peer = _peerMgr.getPeerByIndex(p);
+        if (!peer || !peer->valid) continue;
 
-    _sendBroadcastFrame(FrameType::ROUTE_ADV, Protocol::MESH_INTERNAL, buf, len);
+        uint8_t buf[216];
+        size_t len = _router.serializeRouteAdv(buf, sizeof(buf), peer->mac);
+        if (len == 0) continue;
+
+        _sendFrame(peer->mac, FrameType::ROUTE_ADV, Protocol::MESH_INTERNAL, buf, len);
+    }
 }
 
 void MeshNetwork::_checkPeerTimeouts() {
     uint32_t now = millis();
-    for (size_t i = 0; i < _peerMgr.getPeerCount(); i++) {
-        PeerEntry* peer = _peerMgr.getPeerByIndex(i);
-        if (peer && peer->valid && (now - peer->lastSeen > 120000)) {
-            // Peer timed out
-            Serial.printf("[Mesh] Peer timeout: %02X:%02X:%02X:%02X:%02X:%02X\n",
-                          peer->mac[0], peer->mac[1], peer->mac[2],
-                          peer->mac[3], peer->mac[4], peer->mac[5]);
+    // Iterate backwards so removePeer() doesn't skip entries
+    size_t count = _peerMgr.getPeerCount();
+    for (int i = (int)count - 1; i >= 0; i--) {
+        PeerEntry* peer = _peerMgr.getPeerByIndex((size_t)i);
+        if (!peer || !peer->valid) continue;
 
-            IPAddress peerIP(10, 200, peer->mac[4], peer->mac[5]);
-            if (_onLeaveCb) {
-                _onLeaveCb(peer->mac, peerIP);
-            }
-
-            _router.handleRouteWithdraw(peer->mac);
-            _peerMgr.removePeer(peer->mac);
+        // Calculate timeout for this peer
+        // Battery nodes can sleep for long intervals: use max(3×sleepInterval + 60s, 120s)
+        uint32_t timeoutMs;
+        if (peer->isBattery && peer->sleepIntervalMs > 0) {
+            timeoutMs = peer->sleepIntervalMs * PEER_TIMEOUT_BATTERY_FACTOR + 60000UL;
+            if (timeoutMs < PEER_TIMEOUT_BATTERY_MIN_MS) timeoutMs = PEER_TIMEOUT_BATTERY_MIN_MS;
+        } else {
+            timeoutMs = PEER_TIMEOUT_NORMAL_MS;
         }
+
+        if (now - peer->lastSeen <= timeoutMs) continue;
+
+        Serial.printf("[Mesh] Peer timeout (%s): %02X:%02X:%02X:%02X:%02X:%02X (last seen %lus ago)\n",
+                      peer->isBattery ? "battery" : "normal",
+                      peer->mac[0], peer->mac[1], peer->mac[2],
+                      peer->mac[3], peer->mac[4], peer->mac[5],
+                      (unsigned long)((now - peer->lastSeen) / 1000));
+
+        // Copy MAC before removing the peer
+        uint8_t timedOutMac[6];
+        memcpy(timedOutMac, peer->mac, 6);
+
+        IPAddress peerIP(10, 200, timedOutMac[4], timedOutMac[5]);
+        if (_onLeaveCb) {
+            _onLeaveCb(timedOutMac, peerIP);
+        }
+
+        // Remove local routes through or to this peer
+        _router.handleRouteWithdraw(timedOutMac);
+        _peerMgr.removePeer(timedOutMac);
+
+        // Broadcast ROUTE_WITHDRAW so other nodes converge immediately
+        // Payload: 6-byte MAC of the lost peer
+        _sendBroadcastFrame(FrameType::ROUTE_WITHDRAW, Protocol::MESH_INTERNAL,
+                            timedOutMac, 6);
+        Serial.printf("[Mesh] ROUTE_WITHDRAW broadcast for %02X:%02X:%02X:%02X:%02X:%02X\n",
+                      timedOutMac[0], timedOutMac[1], timedOutMac[2],
+                      timedOutMac[3], timedOutMac[4], timedOutMac[5]);
     }
 
     // Timeout stale handshakes (10s)
