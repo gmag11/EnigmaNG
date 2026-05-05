@@ -3,6 +3,7 @@
 #include <esp_wifi.h>
 #include "mbedtls/md.h"
 #include <cstring>
+#include <cstdio>
 
 bool Onboarding::startProvisioningAP(const uint8_t* networkId, uint8_t channel, const char* psk) {
     // Build SSID: ENIGMA-<NetworkID hex>-CH<channel>
@@ -81,4 +82,61 @@ void Onboarding::update() {
     if (_apActive && (millis() - _lastBeaconMs >= JOIN_BEACON_INTERVAL_MS)) {
         sendJoinBeacon();
     }
+}
+
+// ─── Provisioning HTTP Server ─────────────────────────────────────────────────
+
+bool Onboarding::startProvisioningHTTP(uint16_t port) {
+    if (_provServer) return true;  // already running
+
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.server_port = port;
+    config.lru_purge_enable = true;
+
+    if (httpd_start(&_provServer, &config) != ESP_OK) {
+        Serial.println("[Onboarding] Failed to start provisioning HTTP server");
+        return false;
+    }
+
+    httpd_uri_t provUri = {
+        .uri      = "/provision",
+        .method   = HTTP_GET,
+        .handler  = _handleProvision,
+        .user_ctx = this
+    };
+    httpd_register_uri_handler(_provServer, &provUri);
+
+    Serial.printf("[Onboarding] Provisioning HTTP server on port %u\n", port);
+    return true;
+}
+
+void Onboarding::stopProvisioningHTTP() {
+    if (_provServer) {
+        httpd_stop(_provServer);
+        _provServer = nullptr;
+    }
+}
+
+esp_err_t Onboarding::_handleProvision(httpd_req_t* req) {
+    Onboarding* self = (Onboarding*)req->user_ctx;
+
+    if (!self->_provDataSet) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Provisioning data not configured");
+        return ESP_OK;
+    }
+
+    // Build JSON response with network credentials
+    char json[256];
+    int len = snprintf(json, sizeof(json),
+        "{\"channel\":%u,\"networkId\":\"%02X%02X\",\"psk\":\"%s\","
+        "\"mqttBroker\":\"%s\",\"mqttPort\":%u}",
+        self->_provData.channel,
+        self->_provData.networkId[0], self->_provData.networkId[1],
+        self->_provData.psk,
+        self->_provData.mqttBroker,
+        self->_provData.mqttPort);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, json, len);
+    return ESP_OK;
 }

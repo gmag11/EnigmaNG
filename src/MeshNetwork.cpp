@@ -1,8 +1,14 @@
 #include "MeshNetwork.h"
+#include "BatteryNode.h"
 #include <WiFi.h>
 #include <esp_wifi.h>
 #include <esp_mac.h>
+#include <nvs_flash.h>
+#include <nvs.h>
 #include <cstring>
+
+// RTC variable defined in BatteryNode.cpp — accessible across battery-aware functions
+extern BatteryState s_batteryState;
 
 MeshNetwork* MeshNetwork::_instance = nullptr;
 
@@ -84,6 +90,12 @@ bool MeshNetwork::begin(const char* psk, IPAddress staticIP, MeshMode mode) {
     // Set receive callback
     _phy.onReceive(_onFrameReceived);
 
+    // Battery nodes: restore epoch from RTC memory across deep sleep cycles
+    if (mode == MESH_BATTERY) {
+        _epoch = s_batteryState.lastEpoch;
+        Serial.printf("[Mesh] Battery mode: restored epoch=%u from RTC\n", _epoch);
+    }
+
     // Assign IP based on last 2 bytes of MAC if no static IP given
     if (_localIP == IPAddress(0, 0, 0, 0)) {
         _localIP = IPAddress(10, 200, _localMac[4], _localMac[5]);
@@ -122,7 +134,8 @@ void MeshNetwork::setRssiThreshold(int8_t connectDbm, int8_t disconnectDbm) {
 }
 
 void MeshNetwork::setKeyRotationInterval(uint32_t seconds) {
-    // TODO: key rotation timer
+    _keyRotationIntervalMs = seconds * 1000UL;
+    _lastEpochRotationMs = millis();
 }
 
 void MeshNetwork::setMaxRoutes(uint16_t max) {
@@ -199,13 +212,46 @@ bool MeshNetwork::startPrometheus(uint16_t port) {
 void MeshNetwork::setMqttBroker(const char* host, uint16_t port) {}
 
 bool MeshNetwork::setStaticIPTable(const std::vector<std::pair<String, IPAddress>>& table) {
-    return false;
+    // Store MAC→IP table in NVS and populate routing table
+    nvs_handle_t handle;
+    if (nvs_open("mesh_ips", NVS_READWRITE, &handle) != ESP_OK) return false;
+
+    for (const auto& entry : table) {
+        // entry.first = MAC string "AA:BB:CC:DD:EE:FF", entry.second = IP
+        const String& macStr = entry.first;
+        IPAddress ip = entry.second;
+
+        // Parse MAC
+        uint8_t mac[6];
+        if (sscanf(macStr.c_str(), "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+                   &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]) != 6) {
+            continue;
+        }
+
+        // Store in NVS (key = last 4 hex chars of MAC)
+        char key[9];
+        snprintf(key, sizeof(key), "%02X%02X%02X", mac[3], mac[4], mac[5]);
+        uint32_t ipRaw = (uint32_t)ip;
+        nvs_set_u32(handle, key, ipRaw);
+
+        // Add to route table as local entry (hopCount=0 means "us" or "direct")
+        _router.addRoute(ip, mac, mac, 0);
+    }
+
+    nvs_commit(handle);
+    nvs_close(handle);
+    return true;
 }
 
 // ─── Time ─────────────────────────────────────────────────────────────────────
 
-time_t MeshNetwork::getMeshTime() { return 0; }
-void MeshNetwork::onTimeSync(MeshTimeCallback cb) {}
+time_t MeshNetwork::getMeshTime() {
+    return time(nullptr);
+}
+
+void MeshNetwork::onTimeSync(MeshTimeCallback cb) {
+    _onTimeSyncCb = cb;
+}
 
 // ─── Main Loop ────────────────────────────────────────────────────────────────
 
@@ -239,8 +285,17 @@ void MeshNetwork::loop() {
         _lastPeerCheckMs = now;
     }
 
+    // Key rotation
+    if (_keyRotationIntervalMs > 0 && (now - _lastEpochRotationMs >= _keyRotationIntervalMs)) {
+        _rotateEpoch();
+        _lastEpochRotationMs = now;
+    }
+
     // Router maintenance
     _router.update();
+
+    // Fragment reassembly timeout
+    _frag.update();
 }
 
 void MeshNetwork::shutdown() {
@@ -305,8 +360,25 @@ void MeshNetwork::_handleFrame(const uint8_t* srcMac, const uint8_t* data, size_
         case FrameType::ROUTE_WITHDRAW:
             _handleRouteWithdraw(payload, payloadLen);
             break;
+        case FrameType::KEY_NACK:
+            _handleKeyNack(hdr.srcMac, payload, payloadLen);
+            break;
         case FrameType::DATA:
             _handleData(hdr.srcMac, hdr, payload, payloadLen);
+            break;
+        case FrameType::DATA_FRAG: {
+            size_t reassembledLen = 0;
+            const uint8_t* reassembled = _frag.reassemble(hdr.srcMac, payload, payloadLen, &reassembledLen);
+            if (reassembled) {
+                _handleData(hdr.srcMac, hdr, reassembled, reassembledLen);
+            }
+            break;
+        }
+        case FrameType::ARP_QUERY:
+            _handleArpQuery(hdr.srcMac, payload, payloadLen);
+            break;
+        case FrameType::ARP_REPLY:
+            _handleArpReply(hdr.srcMac, payload, payloadLen);
             break;
         default:
             break;
@@ -456,6 +528,9 @@ void MeshNetwork::_handleKeyExchReply(const uint8_t* srcMac, const uint8_t* payl
         _onJoinCb(srcMac, peerIP);
     }
 
+    // Announce our IP→MAC to the new peer (gratuitous ARP)
+    _sendGratuitousArp();
+
     _freeHandshake(srcMac);
 }
 
@@ -563,10 +638,34 @@ void MeshNetwork::_handleRouteWithdraw(const uint8_t* payload, size_t len) {
 
 void MeshNetwork::_handleData(const uint8_t* srcMac, const MeshFrameHeader& hdr,
                               const uint8_t* payload, size_t len) {
-    // For now, log data frames. Full handling needs decryption + netif injection.
     PeerEntry* peer = _peerMgr.findPeer(hdr.srcMac);
     if (peer) {
         peer->lastSeen = millis();
+    }
+
+    // If this is a battery child's UPLINK frame and we are NOT a battery node,
+    // respond with current timestamp for clock synchronization
+    if (peer && peer->isBattery && _mode != MESH_BATTERY) {
+        // Send UPLINK response with 4-byte Unix timestamp
+        uint32_t now = (uint32_t)time(nullptr);
+        uint8_t tsBuf[4];
+        tsBuf[0] = (now >> 24) & 0xFF;
+        tsBuf[1] = (now >> 16) & 0xFF;
+        tsBuf[2] = (now >> 8)  & 0xFF;
+        tsBuf[3] =  now        & 0xFF;
+        _sendFrame(hdr.srcMac, FrameType::DATA, Protocol::MESH_INTERNAL, tsBuf, 4);
+    }
+
+    // Relay if we're not the destination and relay is enabled
+    if (_relayEnabled && memcmp(hdr.dstMac, _localMac, 6) != 0) {
+        static const uint8_t bcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+        if (memcmp(hdr.dstMac, bcast, 6) != 0) {
+            // Unicast relay: find route and forward
+            RouteEntry* route = _router.findRouteByMac(hdr.dstMac);
+            if (route) {
+                _sendFrame(route->nextHopMac, FrameType::DATA, (Protocol)hdr.protocol, payload, len);
+            }
+        }
     }
 }
 
@@ -618,6 +717,28 @@ bool MeshNetwork::_sendBroadcastFrame(FrameType type, Protocol proto,
     }
 
     return _phy.sendBroadcast(frame, MESH_HEADER_SIZE + payloadLen);
+}
+
+bool MeshNetwork::sendData(const uint8_t* dstMac, const uint8_t* data, size_t len) {
+    if (len <= MESH_MAX_PAYLOAD) {
+        // Fits in a single frame
+        return _sendFrame(dstMac, FrameType::DATA, Protocol::IPv4, data, len);
+    }
+
+    // Fragment
+    uint16_t fragId = _frag.nextFragId();
+    Fragmentation::Fragment fragments[FRAG_MAX_FRAGMENTS];
+    uint8_t count = _frag.fragment(data, len, fragId, fragments, FRAG_MAX_FRAGMENTS);
+    if (count == 0) return false;
+
+    bool allOk = true;
+    for (uint8_t i = 0; i < count; i++) {
+        if (!_sendFrame(dstMac, FrameType::DATA_FRAG, Protocol::IPv4,
+                        fragments[i].data, fragments[i].length)) {
+            allOk = false;
+        }
+    }
+    return allOk;
 }
 
 // ─── Periodic Tasks ───────────────────────────────────────────────────────────
@@ -715,6 +836,98 @@ void MeshNetwork::_checkPeerTimeouts() {
             _handshakes[i].state = HandshakeState::IDLE;
         }
     }
+}
+
+// ─── ARP Protocol ─────────────────────────────────────────────────────────────
+
+void MeshNetwork::_sendGratuitousArp() {
+    // Broadcast our IP→MAC mapping so peers update their tables without querying
+    // Payload: IP(4) + MAC(6) = 10 bytes
+    uint8_t payload[10];
+    uint32_t ip = (uint32_t)_localIP;
+    memcpy(payload, &ip, 4);
+    memcpy(payload + 4, _localMac, 6);
+    _sendBroadcastFrame(FrameType::ARP_REPLY, Protocol::MESH_INTERNAL, payload, 10);
+    Serial.printf("[Mesh] Gratuitous ARP: %s → %02X:%02X:%02X:%02X:%02X:%02X\n",
+                  _localIP.toString().c_str(),
+                  _localMac[0], _localMac[1], _localMac[2],
+                  _localMac[3], _localMac[4], _localMac[5]);
+}
+
+void MeshNetwork::_handleArpQuery(const uint8_t* srcMac, const uint8_t* payload, size_t len) {
+    // Payload: requestedIP(4)
+    if (len < 4) return;
+
+    IPAddress requestedIP;
+    uint32_t ipRaw;
+    memcpy(&ipRaw, payload, 4);
+    requestedIP = IPAddress(ipRaw);
+
+    // If the query is for our IP, reply
+    if (requestedIP == _localIP) {
+        uint8_t reply[10];
+        memcpy(reply, &ipRaw, 4);
+        memcpy(reply + 4, _localMac, 6);
+        _sendFrame(srcMac, FrameType::ARP_REPLY, Protocol::MESH_INTERNAL, reply, 10);
+    }
+}
+
+void MeshNetwork::_handleArpReply(const uint8_t* srcMac, const uint8_t* payload, size_t len) {
+    // Payload: IP(4) + MAC(6) = 10 bytes
+    if (len < 10) return;
+
+    IPAddress ip;
+    uint32_t ipRaw;
+    memcpy(&ipRaw, payload, 4);
+    ip = IPAddress(ipRaw);
+
+    const uint8_t* mac = payload + 4;
+
+    // Update route table with this IP→MAC mapping (direct neighbor, hopCount=1)
+    _router.addRoute(ip, mac, srcMac, 1);
+}
+
+// ─── Key Rotation ─────────────────────────────────────────────────────────────
+
+void MeshNetwork::_rotateEpoch() {
+    _epoch++;
+    Serial.printf("[Mesh] Epoch rotated to %u — all peers will renegotiate on next frame\n", _epoch);
+
+    // Persist epoch for battery nodes (survives deep sleep)
+    if (_mode == MESH_BATTERY) {
+        s_batteryState.lastEpoch = _epoch;
+    }
+
+    // Invalidate all peer keys — they'll renegotiate on next communication attempt
+    size_t count = _peerMgr.getPeerCount();
+    for (size_t i = 0; i < count; i++) {
+        PeerEntry* peer = _peerMgr.getPeerByIndex(i);
+        if (peer && peer->valid) {
+            peer->keyEstablished = false;
+            peer->epoch = _epoch;
+        }
+    }
+}
+
+void MeshNetwork::_handleKeyNack(const uint8_t* srcMac, const uint8_t* payload, size_t len) {
+    // Peer is telling us our epoch doesn't match theirs
+    // payload: peerEpoch(1)
+    if (len < 1) return;
+
+    uint8_t peerEpoch = payload[0];
+    Serial.printf("[Mesh] KEY_NACK from %02X:%02X:%02X:%02X:%02X:%02X (their epoch=%u, ours=%u)\n",
+                  srcMac[0], srcMac[1], srcMac[2], srcMac[3], srcMac[4], srcMac[5],
+                  peerEpoch, _epoch);
+
+    // Renegotiate key with this peer
+    PeerEntry* peer = _peerMgr.findPeer(srcMac);
+    if (peer) {
+        peer->keyEstablished = false;
+    }
+    _initiateHandshake(srcMac);
+
+    // After handshake completes, the _nackBuf frame (if any) will be retransmitted
+    // in the next loop iteration when we detect keyEstablished and _nackBuf.valid
 }
 
 // ─── Handshake Context Management ────────────────────────────────────────────

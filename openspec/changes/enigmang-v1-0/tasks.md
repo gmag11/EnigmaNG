@@ -1,6 +1,6 @@
 # Tareas: EnigmaNG v1.0
 
-## Progreso: 51/74 tareas completadas
+## Progreso: 67/74 tareas completadas
 
 ---
 
@@ -8,9 +8,9 @@
 
 - [x] Configurar PlatformIO con Arduino Core ESP32 3.3.8 + QuickESPNow
   - _Test: `pio run` sin errores de compilación_
-- [ ] Verificar compatibilidad de QuickESPNow con IDF 5.5.4
+- [x] Verificar compatibilidad de QuickESPNow con IDF 5.5.4
   - _Test: envío/recepción básico ESP-NOW en 2 ESP32 con QuickESPNow_
-- [ ] Test ESP-NOW básico: envío unicast/broadcast, obtención de RSSI por frame
+- [x] Test ESP-NOW básico: envío unicast/broadcast, obtención de RSSI por frame
   - _Test: 3 nodos, todos reciben broadcast, RSSI devuelto por QuickESPNow_
 - [x] Crear estructura de directorios: `src/`, `arduino/`, `idf_component/`, `examples/`, `test/`
   - _Test: `library.json` válido, PlatformIO lo reconoce como librería_
@@ -59,7 +59,7 @@
   - _Test: misma PSK produce mismos NetworkKey/NetworkID en 2 nodos; LinkKey depende de MACs_
 - [x] Implementar cifrado/descifrado AES-128-GCM con nonce derivado del header
   - _Test: cifrar y descifrar; verificar que campo Protocol está en AD y no puede alterarse_
-- [ ] Implementar handshake ECDH completo: HELLO → REPLY → CONFIRM × 2
+- [x] Implementar handshake ECDH completo: HELLO → REPLY → CONFIRM × 2
   - _Test: 2 nodos con PSK correcta negocian LinkKey; nodo con PSK incorrecta falla en CONFIRM_
 - [x] Implementar PeerManager con hash table de direccionamiento abierto
   - _Test: insertar 20 peers, buscar por MAC en O(1) amortizado_
@@ -74,11 +74,11 @@
 
 **Spec:** `openspec/specs/crypto/spec.md` (§4.3)
 
-- [ ] Implementar timer de rotación de epoch (`setKeyRotationInterval()`)
+- [x] Implementar timer de rotación de epoch (`setKeyRotationInterval()`)
   - _Test: tras el intervalo, el nodo incrementa epoch y el siguiente frame usa epoch N+1_
-- [ ] Implementar `KEY_NACK` y buffer de 1 frame rechazado por peer
+- [x] Implementar `KEY_NACK` y buffer de 1 frame rechazado por peer
   - _Test: emisor recibe KEY_NACK → inicia renegociación → retransmite frame buffereado_
-- [ ] Implementar detección de epoch en nodos batería (RTC_DATA_ATTR)
+- [x] Implementar detección de epoch en nodos batería (RTC_DATA_ATTR)
   - _Test: forzar cambio de epoch durante deep sleep; nodo detecta y renegocia al despertar_
 
 ---
@@ -125,7 +125,7 @@
   - _Test: paquete IPv4 inyectado en `mesh0` recibido por socket UDP en el nodo_
 - [x] Implementar path TX: `mesh_netif_output()` → buscar ruta → cifrar → send
   - _Test: socket UDP en nodo A envía a IP de B; B recibe el paquete_
-- [ ] Configurar MTU=216 y lwipopts.h (TCP_MSS=176, TCP_WND=704, SACK off)
+- [x] Configurar MTU=216 y lwipopts.h (TCP_MSS=176, TCP_WND=704, SACK off)
   - _Test: MSS negociado en handshake TCP = 176_
 - [ ] Implementar ping transparente (verificar que esp_ping funciona sobre mesh0)
   - _Test: `ping 10.200.0.x` entre dos nodos; RTT medido < 50ms a 1 hop_
@@ -136,11 +136,11 @@
 
 **Spec:** `openspec/specs/ip-netif/spec.md`
 
-- [ ] Implementar fragmentación L2 (header 4B extra, timeout reensamblaje 2s)
+- [x] Implementar fragmentación L2 (header 4B extra, timeout reensamblaje 2s)
   - _Test: UDP de 300 bytes; fragmentado en 2 frames L2; reensamblado correctamente_
-- [ ] Implementar ARP gratuitous en join
+- [x] Implementar ARP gratuitous en join
   - _Test: nodo se une → anuncia IP→MAC → vecinos actualizan tabla sin ARP_QUERY_
-- [ ] Implementar `ARP_QUERY` broadcast y `ARP_REPLY` unicast
+- [x] Implementar `ARP_QUERY` broadcast y `ARP_REPLY` unicast
   - _Test: IP desconocida → ARP_QUERY broadcast → ARP_REPLY recibido en < 1s_
 
 ---
@@ -149,7 +149,7 @@
 
 **Spec:** `openspec/specs/ip-netif/spec.md`
 
-- [ ] Implementar tabla estática distribuida (MAC→IP en NVS + distribución via ROUTE_ADV)
+- [x] Implementar tabla estática distribuida (MAC→IP en NVS + distribución via ROUTE_ADV)
   - _Test: nodo recupera su IP de NVS al reiniciar sin hacer DHCP_
 - [ ] Implementar servidor DHCP en gateway (lwIP dhcpserver)
   - _Test: nodo sin IP estática obtiene IP del gateway por DHCP_
@@ -162,7 +162,7 @@
 
 - [x] Implementar AP permanente de onboarding con SSID `ENIGMA-<NetworkID>-CH<canal>`
   - _Test: SSID visible por WiFi scanner; contraseña = HMAC(PSK,"onboarding")[:8] hex_
-- [ ] Implementar servidor HTTP de provisioning (`GET /provision`)
+- [x] Implementar servidor HTTP de provisioning (`GET /provision`)
   - _Test: nodo nuevo conecta al AP, hace GET /provision, recibe JSON correcto_
 - [x] Implementar `JOIN_BEACON` broadcast cada 5s
   - _Test: nodo en búsqueda ciega recibe JOIN_BEACON en < 10s si está en el canal correcto_
@@ -183,7 +183,7 @@
   - _Test: nodo mesh hace HTTP GET a servidor en LAN → respuesta correcta_
 - [x] Implementar NAT masquerade para tráfico Internet
   - _Test: nodo mesh hace ping a 8.8.8.8 → respuesta recibida_
-- [ ] Implementar selección de gateway por métrica y redundancia
+- [x] Implementar selección de gateway por métrica y redundancia
   - _Test: 2 gateways activos; nodo elige el de mejor métrica; si cae, migra al otro en < 60s_
 
 ---
@@ -211,11 +211,11 @@
   - _Test: nodo cicla cada 60s (configurable); consume < 1mA promedio_
 - [x] Implementar buffer downlink en Parent (FIFO, 5 msgs × 200B por hijo)
   - _Test: 5 mensajes en buffer; nodo los recibe todos en ventanas RX tras UPLINK_
-- [ ] Implementar sincronización de reloj (timestamp del Parent en respuesta UPLINK)
+- [x] Implementar sincronización de reloj (timestamp del Parent en respuesta UPLINK)
   - _Test: `getMeshTime()` en nodo batería devuelve tiempo válido tras primer UPLINK_
 - [x] Implementar lista de 3 candidatos a Parent en NVS
   - _Test: Parent primario desaparece; nodo recupera conexión vía candidato 2 sin re-join_
-- [ ] Verificar que nodo batería NO actúa como relay
+- [x] Verificar que nodo batería NO actúa como relay
   - _Test: frame de terceros recibido por nodo batería → descartado (no retransmitido)_
 
 ---
@@ -254,7 +254,7 @@
 
 - [x] Finalizar `MeshNetwork.h` con API completa según spec
   - _Test: compilación sin warnings en Arduino IDE y PlatformIO_
-- [ ] Implementar `getClient()` como wrapper `WiFiClient` sobre socket lwIP en mesh0
+- [x] Implementar `getClient()` como wrapper `WiFiClient` sobre socket lwIP en mesh0
   - _Test: `PubSubClient` con `getClient()` conecta y publica en broker MQTT en LAN_
 - [x] Crear ejemplo `BasicNode` (Arduino)
   - _Test: flashear en ESP32; nodo aparece en Web UI del gateway_

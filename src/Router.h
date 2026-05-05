@@ -25,6 +25,19 @@
 #define PEER_TIMEOUT_BATTERY_MIN_MS 120000UL         // 120s minimum for battery nodes
 #define PEER_TIMEOUT_BATTERY_FACTOR 3                // multiplier over sleep interval
 
+#ifndef MESH_MAX_GATEWAYS
+#define MESH_MAX_GATEWAYS 4
+#endif
+
+// Gateway candidate entry
+struct GatewayEntry {
+    uint8_t  mac[6];        // Gateway peer MAC
+    uint8_t  hopCount;      // Hops to this gateway
+    uint8_t  uplinkMetric;  // Gateway's advertised uplink quality (lower=better)
+    uint32_t lastSeen;      // millis timestamp of last announcement
+    bool     valid;
+};
+
 // Route entry: ~25 bytes
 struct RouteEntry {
     IPAddress destIP;        // 4 bytes
@@ -65,6 +78,13 @@ public:
     // ROUTE_WITHDRAW
     void handleRouteWithdraw(const uint8_t* destMac);
 
+    // Gateway selection
+    void updateGateway(const uint8_t* gwMac, uint8_t hopCount, uint8_t uplinkMetric);
+    const GatewayEntry* getBestGateway() const;
+    size_t getGatewayCount() const;
+    const GatewayEntry* getGatewayByIndex(size_t index) const;
+    void expireGateways();
+
     // Seen-Frame Cache (duplicate detection for broadcast/relay)
     bool isFrameSeen(const uint8_t* srcMac, uint16_t seq);
     void markFrameSeen(const uint8_t* srcMac, uint16_t seq);
@@ -87,6 +107,9 @@ private:
     RouteEntry _routes[MESH_MAX_ROUTES];
     size_t _routeCount = 0;
     bool _topologyChanged = false;
+
+    // Gateway table
+    GatewayEntry _gateways[MESH_MAX_GATEWAYS];
 
     // Seen-Frame Cache (circular buffer)
     SeenFrameEntry _seenCache[MESH_SEEN_CACHE_SIZE];

@@ -4,7 +4,7 @@
 #include <cstring>
 
 // RTC memory for surviving deep sleep
-RTC_DATA_ATTR static BatteryState s_batteryState;
+RTC_DATA_ATTR BatteryState s_batteryState;
 
 void BatteryNode::begin(uint32_t sleepIntervalSec) {
     _state = &s_batteryState;

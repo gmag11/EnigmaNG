@@ -12,6 +12,7 @@
 #include "Crypto.h"
 #include "PeerManager.h"
 #include "Router.h"
+#include "Fragmentation.h"
 #include "Onboarding.h"
 #include "WebUI.h"
 
@@ -70,6 +71,9 @@ public:
     // Transparent IP integration
     WiFiClient& getClient();
 
+    // Data send (auto-fragments if > MTU)
+    bool sendData(const uint8_t* dstMac, const uint8_t* data, size_t len);
+
     // Callbacks
     void onNodeJoin(MeshNodeCallback cb);
     void onNodeLeave(MeshNodeCallback cb);
@@ -107,6 +111,7 @@ private:
     MeshPhysicalLayer _phy;
     PeerManager _peerMgr;
     Router _router;
+    Fragmentation _frag;
     CryptoKeys _keys;
     Onboarding _onboarding;
     WebUI _webUI;
@@ -115,9 +120,23 @@ private:
     uint16_t _seqCounter = 0;
     uint8_t _epoch = 0;
 
+    // Key rotation
+    uint32_t _keyRotationIntervalMs = 0;  // 0 = disabled
+    uint32_t _lastEpochRotationMs = 0;
+
+    // KEY_NACK: buffer of 1 rejected frame per peer (for retransmission after renegotiation)
+    struct NackBuffer {
+        uint8_t  peerMac[6];
+        uint8_t  frame[250];
+        size_t   frameLen;
+        bool     valid;
+    };
+    NackBuffer _nackBuf = {};
+
     // Callbacks
     MeshNodeCallback _onJoinCb = nullptr;
     MeshNodeCallback _onLeaveCb = nullptr;
+    MeshTimeCallback _onTimeSyncCb = nullptr;
 
     // Handshake management (max 4 concurrent)
     static constexpr size_t MAX_HANDSHAKES = 4;
@@ -138,6 +157,9 @@ private:
     void _handleKeyExchConfirm(const uint8_t* srcMac, const uint8_t* payload, size_t len);
     void _handleRouteAdv(const uint8_t* srcMac, const uint8_t* payload, size_t len);
     void _handleRouteWithdraw(const uint8_t* payload, size_t len);
+    void _handleKeyNack(const uint8_t* srcMac, const uint8_t* payload, size_t len);
+    void _handleArpQuery(const uint8_t* srcMac, const uint8_t* payload, size_t len);
+    void _handleArpReply(const uint8_t* srcMac, const uint8_t* payload, size_t len);
     void _handleData(const uint8_t* srcMac, const MeshFrameHeader& hdr, const uint8_t* payload, size_t len);
 
     // Frame sending
@@ -159,6 +181,8 @@ private:
     void _sendRouteAdv();
     void _sendJoinBeacon();
     void _checkPeerTimeouts();
+    void _rotateEpoch();
+    void _sendGratuitousArp();
 
     // Singleton for static callback
     static MeshNetwork* _instance;

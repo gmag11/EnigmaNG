@@ -232,6 +232,7 @@ RouteEntry* Router::getRouteByIndex(size_t index) {
 
 void Router::update() {
     expireRoutes();
+    expireGateways();
 
     // Clean expired seen-frame entries
     uint32_t now = millis();
@@ -261,4 +262,90 @@ int Router::_findEvictionCandidate() {
     }
 
     return candidate;
+}
+
+// ─── Gateway Selection ────────────────────────────────────────────────────────
+
+void Router::updateGateway(const uint8_t* gwMac, uint8_t hopCount, uint8_t uplinkMetric) {
+    // Update existing entry
+    for (size_t i = 0; i < MESH_MAX_GATEWAYS; i++) {
+        if (_gateways[i].valid && memcmp(_gateways[i].mac, gwMac, 6) == 0) {
+            _gateways[i].hopCount = hopCount;
+            _gateways[i].uplinkMetric = uplinkMetric;
+            _gateways[i].lastSeen = millis();
+            return;
+        }
+    }
+
+    // Find free slot
+    for (size_t i = 0; i < MESH_MAX_GATEWAYS; i++) {
+        if (!_gateways[i].valid) {
+            memcpy(_gateways[i].mac, gwMac, 6);
+            _gateways[i].hopCount = hopCount;
+            _gateways[i].uplinkMetric = uplinkMetric;
+            _gateways[i].lastSeen = millis();
+            _gateways[i].valid = true;
+            return;
+        }
+    }
+
+    // Evict worst gateway (highest composite metric)
+    size_t worstIdx = 0;
+    uint16_t worstMetric = 0;
+    for (size_t i = 0; i < MESH_MAX_GATEWAYS; i++) {
+        uint16_t composite = (uint16_t)_gateways[i].hopCount * 50 + _gateways[i].uplinkMetric;
+        if (composite > worstMetric) {
+            worstMetric = composite;
+            worstIdx = i;
+        }
+    }
+    memcpy(_gateways[worstIdx].mac, gwMac, 6);
+    _gateways[worstIdx].hopCount = hopCount;
+    _gateways[worstIdx].uplinkMetric = uplinkMetric;
+    _gateways[worstIdx].lastSeen = millis();
+    _gateways[worstIdx].valid = true;
+}
+
+const GatewayEntry* Router::getBestGateway() const {
+    const GatewayEntry* best = nullptr;
+    uint16_t bestMetric = UINT16_MAX;
+
+    for (size_t i = 0; i < MESH_MAX_GATEWAYS; i++) {
+        if (!_gateways[i].valid) continue;
+        // Composite: hopCount×50 + uplinkMetric (lower=better)
+        uint16_t composite = (uint16_t)_gateways[i].hopCount * 50 + _gateways[i].uplinkMetric;
+        if (composite < bestMetric) {
+            bestMetric = composite;
+            best = &_gateways[i];
+        }
+    }
+    return best;
+}
+
+size_t Router::getGatewayCount() const {
+    size_t count = 0;
+    for (size_t i = 0; i < MESH_MAX_GATEWAYS; i++) {
+        if (_gateways[i].valid) count++;
+    }
+    return count;
+}
+
+const GatewayEntry* Router::getGatewayByIndex(size_t index) const {
+    size_t found = 0;
+    for (size_t i = 0; i < MESH_MAX_GATEWAYS; i++) {
+        if (_gateways[i].valid) {
+            if (found == index) return &_gateways[i];
+            found++;
+        }
+    }
+    return nullptr;
+}
+
+void Router::expireGateways() {
+    uint32_t now = millis();
+    for (size_t i = 0; i < MESH_MAX_GATEWAYS; i++) {
+        if (_gateways[i].valid && (now - _gateways[i].lastSeen > ROUTE_EXPIRE_MS * 2)) {
+            _gateways[i].valid = false;
+        }
+    }
 }

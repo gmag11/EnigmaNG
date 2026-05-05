@@ -2,6 +2,7 @@
 #define MESH_ONBOARDING_H
 
 #include <Arduino.h>
+#include <esp_http_server.h>
 
 #define ONBOARDING_SSID_PREFIX     "ENIGMA-"
 #define JOIN_BEACON_INTERVAL_MS    5000
@@ -14,6 +15,10 @@ public:
     // Gateway: start AP for provisioning
     bool startProvisioningAP(const uint8_t* networkId, uint8_t channel, const char* psk);
     void stopProvisioningAP();
+
+    // Start provisioning HTTP server on AP interface (GET /provision)
+    bool startProvisioningHTTP(uint16_t port = 80);
+    void stopProvisioningHTTP();
 
     // Credentials of the running provisioning AP
     const char* getProvisioningSSID()     const { return _apSSID; }
@@ -36,6 +41,9 @@ public:
         uint16_t mqttPort;
     };
 
+    // Set the data returned by GET /provision
+    void setProvisioningData(const ProvisioningData& data) { _provData = data; _provDataSet = true; }
+
     void update();
 
 private:
@@ -47,6 +55,13 @@ private:
     uint32_t _scanStartMs = 0;
     char _apSSID[32]     = {};
     char _apPassword[17] = {};
+
+    // Provisioning HTTP server
+    httpd_handle_t _provServer = nullptr;
+    ProvisioningData _provData = {};
+    bool _provDataSet = false;
+
+    static esp_err_t _handleProvision(httpd_req_t* req);
 };
 
 #endif // MESH_ONBOARDING_H
