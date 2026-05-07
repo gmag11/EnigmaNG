@@ -13,6 +13,7 @@
 #include "PeerManager.h"
 #include "Router.h"
 #include "Fragmentation.h"
+#include "NetifDriver.h"
 #include "Onboarding.h"
 #include "WebUI.h"
 
@@ -112,6 +113,7 @@ private:
     PeerManager _peerMgr;
     Router _router;
     Fragmentation _frag;
+    NetifDriver _netifDrv;
     CryptoKeys _keys;
     Onboarding _onboarding;
     WebUI _webUI;
@@ -183,6 +185,9 @@ private:
     void _checkPeerTimeouts();
     void _rotateEpoch();
     void _sendGratuitousArp();
+
+    // Netif TX callback (lwIP → mesh)
+    static bool _netifTxCallback(const uint8_t* data, size_t len, void* ctx);
 
     // Singleton for static callback
     static MeshNetwork* _instance;

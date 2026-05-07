@@ -127,8 +127,9 @@
   - _Test: socket UDP en nodo A envía a IP de B; B recibe el paquete_
 - [x] Configurar MTU=216 y lwipopts.h (TCP_MSS=176, TCP_WND=704, SACK off)
   - _Test: MSS negociado en handshake TCP = 176_
-- [ ] Implementar ping transparente (verificar que esp_ping funciona sobre mesh0)
+- [x] Implementar ping transparente (verificar que esp_ping funciona sobre mesh0)
   - _Test: `ping 10.200.0.x` entre dos nodos; RTT medido < 50ms a 1 hop_
+  - _Impl: ejemplo `GatewayPing` usa raw ICMP via `SOCK_RAW/IPPROTO_ICMP` (esp_ping no disponible en Arduino). Compila OK._
 
 ---
 

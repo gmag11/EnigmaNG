@@ -110,6 +110,17 @@ bool MeshNetwork::begin(const char* psk, IPAddress staticIP, MeshMode mode) {
         Serial.printf("[Mesh] Onboarding AP  Pass: %s\n", _onboarding.getProvisioningPassword());
     }
 
+    // Initialize virtual network interface mesh0
+    IPAddress subnet(255, 255, 0, 0);
+    IPAddress gw = (mode == MESH_GATEWAY) ? _localIP : IPAddress(0, 0, 0, 0);
+    if (_netifDrv.begin(_localMac, _localIP, subnet, gw)) {
+        _netifDrv.setTxCallback(_netifTxCallback, this);
+        Serial.printf("[Mesh] mesh0 netif UP — %s/%s\n",
+                      _localIP.toString().c_str(), subnet.toString().c_str());
+    } else {
+        Serial.println("[Mesh] WARNING: Failed to create mesh0 netif");
+    }
+
     _connected = true;
     _lastRouteAdvMs = millis();
     _lastBeaconMs = millis();
@@ -151,7 +162,17 @@ void MeshNetwork::setChannel(uint8_t channel) {
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
-bool MeshNetwork::isConnected() { return _connected; }
+bool MeshNetwork::isConnected() {
+    if (!_connected) return false;
+    // Gateway is always "connected" once the mesh is up (it is the root)
+    if (_mode == MESH_GATEWAY) return true;
+    // For regular / battery nodes: connected means at least one fully-handshaked peer
+    for (size_t i = 0; i < _peerMgr.getPeerCount(); i++) {
+        PeerEntry* p = _peerMgr.getPeerByIndex(i);
+        if (p && p->valid && p->keyEstablished) return true;
+    }
+    return false;
+}
 bool MeshNetwork::isGateway() { return _mode == MESH_GATEWAY; }
 
 int MeshNetwork::getNodeCount() {
@@ -645,8 +666,8 @@ void MeshNetwork::_handleData(const uint8_t* srcMac, const MeshFrameHeader& hdr,
 
     // If this is a battery child's UPLINK frame and we are NOT a battery node,
     // respond with current timestamp for clock synchronization
-    if (peer && peer->isBattery && _mode != MESH_BATTERY) {
-        // Send UPLINK response with 4-byte Unix timestamp
+    if (peer && peer->isBattery && _mode != MESH_BATTERY &&
+        (Protocol)hdr.protocol == Protocol::MESH_INTERNAL) {
         uint32_t now = (uint32_t)time(nullptr);
         uint8_t tsBuf[4];
         tsBuf[0] = (now >> 24) & 0xFF;
@@ -654,19 +675,51 @@ void MeshNetwork::_handleData(const uint8_t* srcMac, const MeshFrameHeader& hdr,
         tsBuf[2] = (now >> 8)  & 0xFF;
         tsBuf[3] =  now        & 0xFF;
         _sendFrame(hdr.srcMac, FrameType::DATA, Protocol::MESH_INTERNAL, tsBuf, 4);
+        return;  // internal frame, don't inject into netif
+    }
+
+    bool isForUs = (memcmp(hdr.dstMac, _localMac, 6) == 0);
+    static const uint8_t bcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    bool isBroadcast = (memcmp(hdr.dstMac, bcast, 6) == 0);
+
+    // Deliver IPv4 packets to local lwIP stack via mesh0 netif
+    if ((isForUs || isBroadcast) && (Protocol)hdr.protocol == Protocol::IPv4 && len > 0) {
+        _netifDrv.injectRxPacket(payload, len);
     }
 
     // Relay if we're not the destination and relay is enabled
-    if (_relayEnabled && memcmp(hdr.dstMac, _localMac, 6) != 0) {
-        static const uint8_t bcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-        if (memcmp(hdr.dstMac, bcast, 6) != 0) {
-            // Unicast relay: find route and forward
-            RouteEntry* route = _router.findRouteByMac(hdr.dstMac);
-            if (route) {
-                _sendFrame(route->nextHopMac, FrameType::DATA, (Protocol)hdr.protocol, payload, len);
-            }
+    if (_relayEnabled && !isForUs && !isBroadcast) {
+        RouteEntry* route = _router.findRouteByMac(hdr.dstMac);
+        if (route) {
+            _sendFrame(route->nextHopMac, FrameType::DATA, (Protocol)hdr.protocol, payload, len);
         }
     }
+}
+
+// ─── Netif TX (lwIP → mesh) ──────────────────────────────────────────────────
+
+bool MeshNetwork::_netifTxCallback(const uint8_t* data, size_t len, void* ctx) {
+    MeshNetwork* self = (MeshNetwork*)ctx;
+    if (!self || len < 20) return false;  // minimum IPv4 header
+
+    // Extract destination IP from IPv4 header (bytes 16-19)
+    IPAddress dstIP(data[16], data[17], data[18], data[19]);
+
+    // Look up route by destination IP
+    RouteEntry* route = self->_router.findRouteByIP(dstIP);
+    if (route) {
+        return self->sendData(route->nextHopMac, data, len);
+    }
+
+    // No route — check if broadcast (255.255.255.255 or subnet broadcast)
+    if (dstIP == IPAddress(255, 255, 255, 255) ||
+        data[19] == 0xFF) {
+        uint8_t bcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+        return self->_sendBroadcastFrame(FrameType::DATA, Protocol::IPv4, data, len);
+    }
+
+    Serial.printf("[Mesh] TX: no route to %s\n", dstIP.toString().c_str());
+    return false;
 }
 
 // ─── Frame Sending ────────────────────────────────────────────────────────────
