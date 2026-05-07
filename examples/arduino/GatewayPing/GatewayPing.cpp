@@ -14,8 +14,8 @@ MeshNetwork mesh;
 const char* PSK       = "MySecretMeshKey123";
 const uint8_t CHANNEL = 6;
 
-const char* WIFI_SSID = "";   // Leave empty to run mesh-only (no uplink)
-const char* WIFI_PASS = "";
+const char* WIFI_SSID = "***REMOVED***";
+const char* WIFI_PASS = "***REMOVED***";
 // ────────────────────────────────────────────────────────────────
 
 // ─── Minimal ICMP header ─────────────────────────────────────────

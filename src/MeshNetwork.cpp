@@ -417,8 +417,11 @@ void MeshNetwork::_handleJoinBeacon(const uint8_t* srcMac, const uint8_t* payloa
                       srcMac[0], srcMac[1], srcMac[2], srcMac[3], srcMac[4], srcMac[5]);
         _initiateHandshake(srcMac);
     } else {
-        // Refresh lastSeen
-        peer->lastSeen = millis();
+        // Refresh lastSeen and the direct route to this peer
+        uint32_t now = millis();
+        peer->lastSeen = now;
+        RouteEntry* r = _router.findRouteByMac(srcMac);
+        if (r && r->valid) r->lastUpdated = now;
 
         // Update battery/sleep metadata from beacon payload
         // Payload: channel(1) + localIP(4) + mode(1) [+ sleepIntervalSec(4) if battery]

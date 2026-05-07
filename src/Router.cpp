@@ -91,7 +91,11 @@ bool Router::removeRoute(IPAddress destIP) {
 void Router::expireRoutes() {
     uint32_t now = millis();
     for (size_t i = 0; i < MESH_MAX_ROUTES; i++) {
-        if (_routes[i].valid && (now - _routes[i].lastUpdated > ROUTE_EXPIRE_MS)) {
+        if (!_routes[i].valid) continue;
+        // Direct routes (next hop IS the destination) are only removed by
+        // handleRouteWithdraw when the peer times out — never by this timer.
+        if (memcmp(_routes[i].nextHopMac, _routes[i].destMac, 6) == 0) continue;
+        if (now - _routes[i].lastUpdated > ROUTE_EXPIRE_MS) {
             _routes[i].valid = false;
             _routeCount--;
             _topologyChanged = true;
