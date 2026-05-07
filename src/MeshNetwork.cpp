@@ -694,7 +694,10 @@ void MeshNetwork::_handleData(const uint8_t* srcMac, const MeshFrameHeader& hdr,
     if (_relayEnabled && !isForUs && !isBroadcast) {
         RouteEntry* route = _router.findRouteByMac(hdr.dstMac);
         if (route) {
-            _sendFrame(route->nextHopMac, FrameType::DATA, (Protocol)hdr.protocol, payload, len);
+            // Keep hdr.dstMac as the end-to-end destination in the relayed frame header,
+            // but deliver physically to route->nextHopMac (the immediate neighbor toward dst).
+            _sendFrameVia(hdr.dstMac, route->nextHopMac,
+                          FrameType::DATA, (Protocol)hdr.protocol, payload, len);
         }
     }
 }
@@ -711,7 +714,27 @@ bool MeshNetwork::_netifTxCallback(const uint8_t* data, size_t len, void* ctx) {
     // Look up route by destination IP
     RouteEntry* route = self->_router.findRouteByIP(dstIP);
     if (route) {
-        return self->sendData(route->nextHopMac, data, len);
+        // hdr.dstMac = final destination (route->destMac) so intermediate relay nodes
+        // know this frame is not for them and forward it correctly.
+        // Physical ESP-NOW delivery goes to route->nextHopMac (the immediate neighbor).
+        if (len <= MESH_MAX_PAYLOAD) {
+            return self->_sendFrameVia(route->destMac, route->nextHopMac,
+                                       FrameType::DATA, Protocol::IPv4, data, len);
+        }
+        // Fragment: each fragment carries finalDstMac in the header
+        uint16_t fragId = self->_frag.nextFragId();
+        Fragmentation::Fragment fragments[FRAG_MAX_FRAGMENTS];
+        uint8_t count = self->_frag.fragment(data, len, fragId, fragments, FRAG_MAX_FRAGMENTS);
+        if (count == 0) return false;
+        bool allOk = true;
+        for (uint8_t i = 0; i < count; i++) {
+            if (!self->_sendFrameVia(route->destMac, route->nextHopMac,
+                                     FrameType::DATA_FRAG, Protocol::IPv4,
+                                     fragments[i].data, fragments[i].length)) {
+                allOk = false;
+            }
+        }
+        return allOk;
     }
 
     // No route — check if broadcast (255.255.255.255 or subnet broadcast)
@@ -729,6 +752,12 @@ bool MeshNetwork::_netifTxCallback(const uint8_t* data, size_t len, void* ctx) {
 
 bool MeshNetwork::_sendFrame(const uint8_t* dstMac, FrameType type, Protocol proto,
                              const uint8_t* payload, size_t payloadLen) {
+    return _sendFrameVia(dstMac, dstMac, type, proto, payload, payloadLen);
+}
+
+bool MeshNetwork::_sendFrameVia(const uint8_t* finalDstMac, const uint8_t* nextHopMac,
+                                FrameType type, Protocol proto,
+                                const uint8_t* payload, size_t payloadLen) {
     uint8_t frame[250];
     if (MESH_HEADER_SIZE + payloadLen > sizeof(frame)) return false;
 
@@ -740,7 +769,7 @@ bool MeshNetwork::_sendFrame(const uint8_t* dstMac, FrameType type, Protocol pro
     hdr.protocol = (uint8_t)proto;
     hdr.epoch = _epoch;
     memcpy(hdr.srcMac, _localMac, 6);
-    memcpy(hdr.dstMac, dstMac, 6);
+    memcpy(hdr.dstMac, finalDstMac, 6);  // end-to-end destination
     hdr.sequence = ++_seqCounter;
 
     LinkLayer::serializeHeader(frame, hdr);
@@ -748,7 +777,8 @@ bool MeshNetwork::_sendFrame(const uint8_t* dstMac, FrameType type, Protocol pro
         memcpy(frame + MESH_HEADER_SIZE, payload, payloadLen);
     }
 
-    return _phy.sendUnicast(dstMac, frame, MESH_HEADER_SIZE + payloadLen);
+    // Physical delivery to the immediate neighbor (may differ from finalDstMac in multi-hop)
+    return _phy.sendUnicast(nextHopMac, frame, MESH_HEADER_SIZE + payloadLen);
 }
 
 bool MeshNetwork::_sendBroadcastFrame(FrameType type, Protocol proto,
@@ -776,9 +806,16 @@ bool MeshNetwork::_sendBroadcastFrame(FrameType type, Protocol proto,
 }
 
 bool MeshNetwork::sendData(const uint8_t* dstMac, const uint8_t* data, size_t len) {
+    // Resolve the next-hop for dstMac: if there is a route, use it so multi-hop
+    // topologies work correctly.  For direct neighbors the route's nextHopMac == dstMac.
+    const uint8_t* nextHopMac = dstMac;
+    RouteEntry* route = _router.findRouteByMac(dstMac);
+    if (route) {
+        nextHopMac = route->nextHopMac;
+    }
+
     if (len <= MESH_MAX_PAYLOAD) {
-        // Fits in a single frame
-        return _sendFrame(dstMac, FrameType::DATA, Protocol::IPv4, data, len);
+        return _sendFrameVia(dstMac, nextHopMac, FrameType::DATA, Protocol::IPv4, data, len);
     }
 
     // Fragment
@@ -789,8 +826,8 @@ bool MeshNetwork::sendData(const uint8_t* dstMac, const uint8_t* data, size_t le
 
     bool allOk = true;
     for (uint8_t i = 0; i < count; i++) {
-        if (!_sendFrame(dstMac, FrameType::DATA_FRAG, Protocol::IPv4,
-                        fragments[i].data, fragments[i].length)) {
+        if (!_sendFrameVia(dstMac, nextHopMac, FrameType::DATA_FRAG, Protocol::IPv4,
+                           fragments[i].data, fragments[i].length)) {
             allOk = false;
         }
     }

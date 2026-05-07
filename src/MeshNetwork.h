@@ -165,8 +165,13 @@ private:
     void _handleData(const uint8_t* srcMac, const MeshFrameHeader& hdr, const uint8_t* payload, size_t len);
 
     // Frame sending
+    // _sendFrame: dstMac is both the mesh header end-to-end dst AND the physical ESP-NOW peer
     bool _sendFrame(const uint8_t* dstMac, FrameType type, Protocol proto,
                     const uint8_t* payload, size_t payloadLen);
+    // _sendFrameVia: finalDstMac goes in the mesh header, nextHopMac is the physical ESP-NOW peer
+    bool _sendFrameVia(const uint8_t* finalDstMac, const uint8_t* nextHopMac,
+                       FrameType type, Protocol proto,
+                       const uint8_t* payload, size_t payloadLen);
     bool _sendBroadcastFrame(FrameType type, Protocol proto,
                              const uint8_t* payload, size_t payloadLen);
 
