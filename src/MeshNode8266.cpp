@@ -471,7 +471,7 @@ void MeshNode8266::_handleProxyMessage(const uint8_t* payload, size_t len) {
     if (payload[0] != (uint8_t)ProxyMsgType::PROXY_MESSAGE) return;
 
     uint8_t topicLen = payload[1];
-    if (2 + topicLen > len) return;
+    if (2 + (size_t)topicLen > len) return;
 
     char topic[MESH8266_MAX_TOPIC_LEN] = {};
     size_t copyLen = (topicLen < sizeof(topic) - 1) ? topicLen : sizeof(topic) - 1;

@@ -3,9 +3,17 @@
 
 #if !defined(ESP8266)
 
+#ifndef CONFIG_LWIP_IP_FORWARD
+#define CONFIG_LWIP_IP_FORWARD 1
+#endif
+#ifndef CONFIG_LWIP_IPV4_NAPT
+#define CONFIG_LWIP_IPV4_NAPT 1
+#endif
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include <IPAddress.h>
+#include <esp_netif.h>
 
 // Gateway: WiFi STA + ESP-NOW dual mode
 // Handles routing between mesh0 and wifi_sta, NAT, DHCP server
@@ -32,10 +40,8 @@ public:
     bool begin(const char* wifiSsid, const char* wifiPass);
     void stop();
 
-    // IP forwarding between mesh0 and wifi_sta
-    bool enableIPForwarding();
-
-    // NAT masquerade for internet traffic
+    // NAT masquerade: always enabled after uplink connects
+    // CONFIG_LWIP_IP_FORWARD and CONFIG_LWIP_IPV4_NAPT default to 1 (see top of this header)
     bool enableNAT();
 
     // DHCP server for mesh nodes
@@ -55,7 +61,6 @@ public:
 private:
     NativeWifiUplink _uplink;
     bool _natEnabled = false;
-    bool _forwardingEnabled = false;
     bool _dhcpRunning = false;
     uint32_t _lastAnnounceMs = 0;
 };

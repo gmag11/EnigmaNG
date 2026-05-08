@@ -5,6 +5,8 @@
 #include <WiFi.h>
 #include <esp_wifi.h>
 #include <esp_mac.h>
+#include <esp_netif.h>
+#include <lwip/lwip_napt.h>
 #include <nvs_flash.h>
 #include <nvs.h>
 #include <cstring>
@@ -60,11 +62,20 @@ bool MeshNetwork::begin(const char* psk, IPAddress staticIP, MeshMode mode) {
             }
         }, ARDUINO_EVENT_WIFI_AP_START);
 
-        // Log when a WiFi uplink connection is established
+        // Enable NAPT automatically when uplink IP is assigned
         WiFi.onEvent([](arduino_event_id_t, arduino_event_info_t info) {
             Serial.printf("[Mesh] WiFi uplink connected — IP: %s  GW: %s\n",
                           IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str(),
                           IPAddress(info.got_ip.ip_info.gw.addr).toString().c_str());
+            // Enable NAPT: all traffic from mesh0 → wifi_sta is masqueraded with the STA IP.
+            // info.got_ip.ip_info.ip.addr is in network byte order (from IDF esp_netif) — correct for ip_napt_enable.
+#if defined(IP_NAPT)
+            ip_napt_enable(info.got_ip.ip_info.ip.addr, 1);
+            Serial.printf("[Mesh] NAPT enabled — masquerading with %s\n",
+                          IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str());
+#else
+            Serial.println("[Mesh] WARNING: IP_NAPT not compiled in — mesh nodes cannot reach WiFi/Internet");
+#endif
         }, ARDUINO_EVENT_WIFI_STA_GOT_IP);
         Serial.println("[Mesh] Event handlers registered");
     }

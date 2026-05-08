@@ -92,4 +92,4 @@ esp_ping_start(ping);
 - Test: UDP de 200 bytes (requiere fragmentación L2). Reensamblaje correcto en destino.
 - Test: TCP MQTT QoS 0 publish funcional entre nodo y broker en LAN.
 - Test: `ping 8.8.8.8` desde nodo mesh a través del gateway (mesh → gateway → NAT → Internet).
-- Test: `ping <ip_mesh>` desde dispositivo WiFi de la LAN a través del gateway (routing LAN §9.2).
+- Test: TCP MQTT publish desde nodo mesh a broker en LAN (mesh → gateway → NAT → LAN). El broker ve la IP WiFi del gateway como origen.

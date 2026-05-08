@@ -180,9 +180,9 @@
   - _Test: gateway conectado a AP WiFi en canal 6; mesh opera en canal 6_
 - [x] Implementar abstracción `MeshUplink` con `NativeWifiUplink`
   - _Test: uplink WiFi conectado; `isConnected()` devuelve true_
-- [x] Implementar `ip_forward` entre `mesh0` y `wifi_sta` (o ip_napt según disponibilidad IDF)
-  - _Test: nodo mesh hace HTTP GET a servidor en LAN → respuesta correcta_
-- [x] Implementar NAT masquerade para tráfico Internet
+- [x] Implementar `ip_napt` (NAT completo) en `mesh0` → `wifi_sta`
+  - _Test: nodo mesh hace TCP MQTT publish a broker en LAN → conexión exitosa; broker ve IP del gateway_
+- [x] Implementar NAT masquerade para todo el tráfico saliente (LAN e Internet)
   - _Test: nodo mesh hace ping a 8.8.8.8 → respuesta recibida_
 - [x] Implementar selección de gateway por métrica y redundancia
   - _Test: 2 gateways activos; nodo elige el de mejor métrica; si cae, migra al otro en < 60s_

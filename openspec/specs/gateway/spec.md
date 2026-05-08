@@ -14,23 +14,25 @@ Conectar la red mesh ESP-NOW a la red WiFi/Internet, proporcionando routing bidi
 - Servidor web: dashboard + API JSON + Prometheus.
 - Puede haber múltiples gateways por redundancia.
 
-## Routing: LAN + NAT Internet
+## Routing: NAT completo (masquerade)
+
+Todo el tráfico saliente de la mesh hacia la red WiFi o Internet pasa por NAT masquerade usando la IP WiFi del gateway. **No se requieren rutas estáticas en el router WiFi del usuario.**
 
 ```
 Tráfico mesh → LAN WiFi (10.200.x.x → 192.168.1.x):
-    Routing directo. Gateway actúa como router.
-    El router WiFi necesita una ruta estática:
-      "10.200.0.0/16 via <IP del gateway>"
-    Gateway anuncia esto via mDNS TXT + Web UI.
+    NAT masquerade. Los nodos mesh se ven como la IP del gateway
+    desde el punto de vista de la LAN. Conexiones outbound funcionan
+    de forma transparente (MQTT, HTTP, CoAP, etc.).
 
 Tráfico mesh → Internet (10.200.x.x → 0.0.0.0/0):
-    NAT masquerading con la IP WiFi del gateway.
-    Implementación: lwIP ip_napt (IDF 5.5.4) o custom via raw socket.
+    NAT masquerade. Idéntico al caso LAN.
 ```
 
-- `ip_forward` habilitado entre `mesh0` y `wifi_sta`.
-- Regla NAT: si `dst_ip` no está en ninguna subred local → masquerade.
-- Proxy ARP opcional (`GATEWAY_PROXY_ARP`): para routers que no aceptan rutas estáticas.
+- `ip_napt` habilitado en `mesh0` (lwIP NAPT, IDF 5.5.4).
+- Todo tráfico saliente desde `mesh0` → `wifi_sta` es masquerado con la IP WiFi.
+- **Sin rutas estáticas** en el router WiFi: cero configuración de red requerida al usuario.
+- **Trade-off aceptado:** la LAN no puede iniciar conexiones hacia nodos mesh (no hay inbound NAT). Esto es correcto para el caso de uso habitual (nodos publican a broker MQTT / servidor HTTP en LAN o Internet).
+- Si se necesita acceso inbound (ej. Web UI del gateway), el propio gateway tiene IP WiFi directa y no pasa por NAT.
 
 ## Selección de gateway (routing multi-gateway)
 

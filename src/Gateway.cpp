@@ -2,6 +2,7 @@
 
 #include "Gateway.h"
 #include <esp_wifi.h>
+#include <esp_netif.h>
 #include <lwip/lwip_napt.h>
 #include <dhcpserver/dhcpserver.h>
 
@@ -43,31 +44,32 @@ bool Gateway::begin(const char* wifiSsid, const char* wifiPass) {
 void Gateway::stop() {
     WiFi.disconnect(true);
     _natEnabled = false;
-    _forwardingEnabled = false;
-}
-
-bool Gateway::enableIPForwarding() {
-    // Enable IP forwarding in lwIP
-    // This allows packets to be routed between mesh0 and wifi_sta
-    _forwardingEnabled = true;
-    // ip_forward is typically enabled via menuconfig or at runtime
-    // For IDF 5.5.4: CONFIG_LWIP_IP_FORWARD=y in sdkconfig
-    return true;
 }
 
 bool Gateway::enableNAT() {
-    // Enable NAPT (Network Address Port Translation) for internet-bound traffic
-    // Note: ip_napt may not be available in all IDF versions
-    // Fallback: raw socket-based NAT implementation
-    #if defined(IP_NAPT)
-    ip_napt_enable((uint32_t)WiFi.localIP(), 1);
+    // Enable NAPT on the wifi_sta netif (outbound interface).
+    // ip_napt_enable() expects the IP in network byte order — use esp_netif_get_ip_info()
+    // so we don't rely on Arduino IPAddress endianness.
+#if defined(IP_NAPT)
+    esp_netif_t* sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (!sta_netif) {
+        Serial.println("[NAT] ERROR: STA netif not found");
+        return false;
+    }
+    esp_netif_ip_info_t ip_info;
+    if (esp_netif_get_ip_info(sta_netif, &ip_info) != ESP_OK || ip_info.ip.addr == 0) {
+        Serial.println("[NAT] ERROR: STA has no IP yet");
+        return false;
+    }
+    ip_napt_enable(ip_info.ip.addr, 1);
     _natEnabled = true;
+    Serial.printf("[NAT] NAPT enabled — masquerading with %s\n",
+                  IPAddress(ip_info.ip.addr).toString().c_str());
     return true;
-    #else
-    // Fallback NAT via raw sockets — to be implemented
-    _natEnabled = false;
+#else
+    Serial.println("[NAT] ERROR: IP_NAPT not compiled in (needs CONFIG_LWIP_IPV4_NAPT=1)");
     return false;
-    #endif
+#endif
 }
 
 bool Gateway::startDHCPServer(IPAddress poolStart, IPAddress poolEnd) {

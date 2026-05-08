@@ -40,7 +40,7 @@ Todas las decisiones están justificadas en §1–§16 del spec. Aquí se resume
 | Epoch + Rechazo (no overlap) | §4.3 | Sin doble clave en RAM; latencia 100ms × 1/día |
 | DVR proactivo (no OLSR/BATMAN) | §6.1 | Simple, probado, escalable hasta ~100 nodos |
 | AP permanente (no temporal) | §5.1 | ESP32 soporta AP+STA; onboarding inmediato |
-| Routing LAN + NAT (no NAT puro) | §9.2 | Acceso bidireccional LAN↔mesh |
+| NAT completo (no routing LAN directo) | §9.2 | Sin rutas estáticas en router WiFi; zero-config para el usuario |
 | HTTP Digest Auth (no Basic/JWT) | §11.2 | Sin password en claro; sin TLS/JWT en v1.0 |
 | Protocol field 1B (EtherType-like) | §4.1.6 | Multiplexación L3; 256 valores suficientes |
 
@@ -107,11 +107,15 @@ A ◀─KEY_EXCH_CONFIRM(GCM{nonceB XOR nonceA})──────────�
 ## Gateway: routing policy (§9.2)
 
 ```
-dst en 10.200.0.0/16?  ──No──▶  dst en subred LAN?  ──No──▶  NAT masquerade
-        │                                │
-        ▼ (mesh0)                        ▼ (wifi_sta, routing directo)
-  Tabla RouteEntry                  ip_forward lwIP
+dst en 10.200.0.0/16?  ──Sí──▶  Tabla RouteEntry (mesh0, interno)
+        │
+        No
+        ▼
+   ip_napt masquerade  ──▶  wifi_sta (LAN o Internet)
+   (src reescrito a IP WiFi del gateway)
 ```
+
+Todo el tráfico saliente de la mesh se NAT-ea. No se requiere configuración en el router WiFi del usuario. El gateway en sí tiene IP WiFi directa (sin NAT) para su propia Web UI y servicios.
 
 ## Estructura del código fuente
 
