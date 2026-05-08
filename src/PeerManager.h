@@ -1,6 +1,8 @@
 #ifndef MESH_PEER_MANAGER_H
 #define MESH_PEER_MANAGER_H
 
+#if !defined(ESP8266)
+
 #include <Arduino.h>
 #include "Crypto.h"
 
@@ -58,4 +60,5 @@ private:
     int _probe(const uint8_t* mac) const;
 };
 
+#endif // !ESP8266
 #endif // MESH_PEER_MANAGER_H

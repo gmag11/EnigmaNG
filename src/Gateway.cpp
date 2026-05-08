@@ -1,3 +1,5 @@
+#if !defined(ESP8266)
+
 #include "Gateway.h"
 #include <esp_wifi.h>
 #include <lwip/lwip_napt.h>
@@ -112,3 +114,5 @@ void Gateway::update() {
         // TODO: Reconnect logic
     }
 }
+
+#endif // !ESP8266

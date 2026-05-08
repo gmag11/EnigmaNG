@@ -1,3 +1,5 @@
+#if !defined(ESP8266)
+
 #include "NetifDriver.h"
 #include "esp_netif.h"
 #include "esp_netif_net_stack.h"
@@ -110,3 +112,5 @@ bool NetifDriver::txCallback(const uint8_t* data, size_t len) {
     }
     return false;
 }
+
+#endif // !ESP8266

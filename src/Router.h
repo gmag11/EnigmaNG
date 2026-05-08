@@ -1,6 +1,8 @@
 #ifndef MESH_ROUTER_H
 #define MESH_ROUTER_H
 
+#if !defined(ESP8266)
+
 #include <Arduino.h>
 #include <IPAddress.h>
 
@@ -119,4 +121,5 @@ private:
     int _findEvictionCandidate();
 };
 
+#endif // !ESP8266
 #endif // MESH_ROUTER_H

@@ -1,6 +1,8 @@
 #ifndef MESH_NETWORK_H
 #define MESH_NETWORK_H
 
+#if !defined(ESP8266)
+
 #include <Arduino.h>
 #include <WiFiClient.h>
 #include <IPAddress.h>
@@ -198,4 +200,5 @@ private:
     static MeshNetwork* _instance;
 };
 
+#endif // !ESP8266
 #endif // MESH_NETWORK_H

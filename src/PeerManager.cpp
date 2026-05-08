@@ -1,3 +1,5 @@
+#if !defined(ESP8266)
+
 #include "PeerManager.h"
 #include <cstring>
 
@@ -161,3 +163,5 @@ bool PeerManager::setLinkKey(const uint8_t* mac, const uint8_t* key, uint8_t epo
     peer->lastSeqRx = 0;
     return true;
 }
+
+#endif // !ESP8266

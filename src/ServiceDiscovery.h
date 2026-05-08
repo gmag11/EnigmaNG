@@ -1,6 +1,8 @@
 #ifndef MESH_SERVICE_DISCOVERY_H
 #define MESH_SERVICE_DISCOVERY_H
 
+#if !defined(ESP8266)
+
 #include <Arduino.h>
 #include <IPAddress.h>
 
@@ -48,4 +50,5 @@ private:
     size_t _discoveredCount = 0;
 };
 
+#endif // !ESP8266
 #endif // MESH_SERVICE_DISCOVERY_H

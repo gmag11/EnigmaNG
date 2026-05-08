@@ -1,3 +1,5 @@
+#if !defined(ESP8266)
+
 #include "WebUI.h"
 #include "MeshNetwork.h"
 #include "mbedtls/md5.h"
@@ -457,3 +459,5 @@ esp_err_t WebUI::_handleMetrics(httpd_req_t* req) {
     httpd_resp_send(req, metrics, strlen(metrics));
     return ESP_OK;
 }
+
+#endif // !ESP8266

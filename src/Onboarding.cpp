@@ -1,3 +1,5 @@
+#if !defined(ESP8266)
+
 #include "Onboarding.h"
 #include <WiFi.h>
 #include <esp_wifi.h>
@@ -140,3 +142,5 @@ esp_err_t Onboarding::_handleProvision(httpd_req_t* req) {
     httpd_resp_send(req, json, len);
     return ESP_OK;
 }
+
+#endif // !ESP8266

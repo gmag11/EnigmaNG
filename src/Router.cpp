@@ -1,3 +1,5 @@
+#if !defined(ESP8266)
+
 #include "Router.h"
 #include <cstring>
 
@@ -353,3 +355,5 @@ void Router::expireGateways() {
         }
     }
 }
+
+#endif // !ESP8266

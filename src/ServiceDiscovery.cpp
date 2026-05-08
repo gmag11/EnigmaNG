@@ -1,3 +1,5 @@
+#if !defined(ESP8266)
+
 #include "ServiceDiscovery.h"
 #include <mdns.h>
 #include <cstring>
@@ -137,3 +139,5 @@ void ServiceDiscovery::update() {
         }
     }
 }
+
+#endif // !ESP8266

@@ -1,6 +1,8 @@
 #ifndef MESH_GATEWAY_H
 #define MESH_GATEWAY_H
 
+#if !defined(ESP8266)
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include <IPAddress.h>
@@ -58,4 +60,5 @@ private:
     uint32_t _lastAnnounceMs = 0;
 };
 
+#endif // !ESP8266
 #endif // MESH_GATEWAY_H

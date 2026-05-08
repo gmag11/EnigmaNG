@@ -1,3 +1,5 @@
+#if !defined(ESP8266)
+
 #include "MeshNetwork.h"
 #include "BatteryNode.h"
 #include <WiFi.h>
@@ -1071,3 +1073,5 @@ void MeshNetwork::_freeHandshake(const uint8_t* mac) {
         }
     }
 }
+
+#endif // !ESP8266

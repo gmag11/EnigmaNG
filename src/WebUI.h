@@ -1,6 +1,8 @@
 #ifndef MESH_WEBUI_H
 #define MESH_WEBUI_H
 
+#if !defined(ESP8266)
+
 #include <Arduino.h>
 #include <esp_http_server.h>
 
@@ -37,4 +39,5 @@ private:
     static esp_err_t _handleConfigPost(httpd_req_t* req);
 };
 
+#endif // !ESP8266
 #endif // MESH_WEBUI_H

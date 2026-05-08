@@ -1,6 +1,8 @@
 #ifndef MESH_NETIF_DRIVER_H
 #define MESH_NETIF_DRIVER_H
 
+#if !defined(ESP8266)
+
 #include <Arduino.h>
 
 struct netif;  // forward declaration (lwIP)
@@ -26,4 +28,5 @@ private:
     void* _txCtx = nullptr;
 };
 
+#endif // !ESP8266
 #endif // MESH_NETIF_DRIVER_H

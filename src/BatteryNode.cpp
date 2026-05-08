@@ -1,3 +1,5 @@
+#if !defined(ESP8266)
+
 #include "BatteryNode.h"
 #include <nvs_flash.h>
 #include <nvs.h>
@@ -159,3 +161,5 @@ bool DownlinkManager::hasMessages(const uint8_t* childMac) {
     DownlinkBuffer* buf = _findBuffer(childMac);
     return buf && buf->count > 0;
 }
+
+#endif // !ESP8266

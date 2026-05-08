@@ -1,6 +1,8 @@
 #ifndef MESH_BATTERY_NODE_H
 #define MESH_BATTERY_NODE_H
 
+#if !defined(ESP8266)
+
 #include <Arduino.h>
 #include <esp_sleep.h>
 
@@ -76,4 +78,5 @@ private:
     DownlinkBuffer* _allocBuffer(const uint8_t* childMac);
 };
 
+#endif // !ESP8266
 #endif // MESH_BATTERY_NODE_H
