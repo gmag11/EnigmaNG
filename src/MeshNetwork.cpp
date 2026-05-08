@@ -7,6 +7,7 @@
 #include <esp_mac.h>
 #include <esp_netif.h>
 #include <lwip/lwip_napt.h>
+#include <lwip/tcpip.h>
 #include <nvs_flash.h>
 #include <nvs.h>
 #include <cstring>
@@ -70,7 +71,9 @@ bool MeshNetwork::begin(const char* psk, IPAddress staticIP, MeshMode mode) {
             // Enable NAPT: all traffic from mesh0 → wifi_sta is masqueraded with the STA IP.
             // info.got_ip.ip_info.ip.addr is in network byte order (from IDF esp_netif) — correct for ip_napt_enable.
 #if defined(IP_NAPT)
+            LOCK_TCPIP_CORE();
             ip_napt_enable(info.got_ip.ip_info.ip.addr, 1);
+            UNLOCK_TCPIP_CORE();
             Serial.printf("[Mesh] NAPT enabled — masquerading with %s\n",
                           IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str());
 #else

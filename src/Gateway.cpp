@@ -4,6 +4,7 @@
 #include <esp_wifi.h>
 #include <esp_netif.h>
 #include <lwip/lwip_napt.h>
+#include <lwip/tcpip.h>
 #include <dhcpserver/dhcpserver.h>
 
 // NativeWifiUplink implementation
@@ -61,7 +62,9 @@ bool Gateway::enableNAT() {
         Serial.println("[NAT] ERROR: STA has no IP yet");
         return false;
     }
+    LOCK_TCPIP_CORE();
     ip_napt_enable(ip_info.ip.addr, 1);
+    UNLOCK_TCPIP_CORE();
     _natEnabled = true;
     Serial.printf("[NAT] NAPT enabled — masquerading with %s\n",
                   IPAddress(ip_info.ip.addr).toString().c_str());
