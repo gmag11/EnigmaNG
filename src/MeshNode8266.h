@@ -8,6 +8,7 @@
 #include "Crypto.h"
 #include "LinkLayer.h"
 #include "PhysicalLayer.h"
+#include "meshConfig.h"
 
 // ─── Proxy protocol types ────────────────────────────────────────────
 
@@ -27,21 +28,6 @@ enum class ProxyMsgType : uint8_t {
 
 typedef void (*MqttMessageCallback)(const char* topic, const uint8_t* payload, size_t len);
 typedef void (*MeshConnectCallback)();
-
-// ─── Configuration ───────────────────────────────────────────────────
-
-#ifndef MESH8266_MAX_TOPIC_LEN
-#define MESH8266_MAX_TOPIC_LEN    64
-#endif
-#ifndef MESH8266_MAX_SUBSCRIPTIONS
-#define MESH8266_MAX_SUBSCRIPTIONS 4
-#endif
-#ifndef MESH8266_DISCOVERY_TIMEOUT_MS
-#define MESH8266_DISCOVERY_TIMEOUT_MS 3000
-#endif
-#ifndef MESH8266_MAX_PROXY_OFFERS
-#define MESH8266_MAX_PROXY_OFFERS  4
-#endif
 
 // ─── MeshNode8266 ────────────────────────────────────────────────────
 

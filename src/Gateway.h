@@ -3,12 +3,7 @@
 
 #if !defined(ESP8266)
 
-#ifndef CONFIG_LWIP_IP_FORWARD
-#define CONFIG_LWIP_IP_FORWARD 1
-#endif
-#ifndef CONFIG_LWIP_IPV4_NAPT
-#define CONFIG_LWIP_IPV4_NAPT 1
-#endif
+#include "meshConfig.h"
 
 #include <Arduino.h>
 #include <WiFi.h>

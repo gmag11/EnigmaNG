@@ -5,10 +5,7 @@
 
 #include <Arduino.h>
 #include "Crypto.h"
-
-#ifndef MESH_MAX_PEERS
-#define MESH_MAX_PEERS 16
-#endif
+#include "meshConfig.h"
 
 // Peer entry: 36 bytes (compact for RAM budget)
 struct PeerEntry {

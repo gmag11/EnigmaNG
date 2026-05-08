@@ -5,14 +5,7 @@
 
 #include <Arduino.h>
 #include <IPAddress.h>
-
-#ifndef MESH_MAX_ROUTES
-#define MESH_MAX_ROUTES 64
-#endif
-
-#ifndef MESH_SEEN_CACHE_SIZE
-#define MESH_SEEN_CACHE_SIZE 32
-#endif
+#include "meshConfig.h"
 
 #define ROUTE_ADV_INTERVAL_MS       30000   // 30s
 #define ROUTE_EXPIRE_MS             90000   // 3 × interval
@@ -26,10 +19,6 @@
 #define PEER_TIMEOUT_NORMAL_MS      90000UL          // 90s
 #define PEER_TIMEOUT_BATTERY_MIN_MS 120000UL         // 120s minimum for battery nodes
 #define PEER_TIMEOUT_BATTERY_FACTOR 3                // multiplier over sleep interval
-
-#ifndef MESH_MAX_GATEWAYS
-#define MESH_MAX_GATEWAYS 4
-#endif
 
 // Gateway candidate entry
 struct GatewayEntry {
