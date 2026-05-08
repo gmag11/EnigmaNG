@@ -119,6 +119,52 @@ Ver spec `public-api/spec.md` para la estructura de directorios completa.
 
 Los módulos son independientes y se pueden compilar por separado. El módulo `Gateway` solo se compila si `MESH_GATEWAY_ENABLED` está definido, ahorrando flash en nodos simples.
 
+## Estructura monorepo ESP32 + ESP8266
+
+**Decisión:** `MeshNode8266` se incluye en este repositorio bajo el mismo directorio `src/`, usando preprocesador para separar el código por plataforma. Razones:
+
+1. Es el enfoque estándar de las librerías Arduino multi-plataforma (WiFiManager, AsyncMqttClient, etc.).
+2. Compatible con el registro de PlatformIO y Arduino Library Manager, que esperan un único `src/`.
+3. Las constantes de protocolo (header de 22B, `FrameType`, `Protocol`, `NetworkID`) están en el mismo directorio — un único punto de verdad.
+
+```
+src/
+  Protocol.h          ← constantes compartidas ESP32+ESP8266 (sin guards)
+  MeshNetwork.h/cpp   ← #ifndef ESP8266 ... #endif
+  Router.h/cpp        ← #ifndef ESP8266 ... #endif
+  Crypto.h/cpp        ← #ifndef ESP8266 ... #endif
+  NetifDriver.h/cpp   ← #ifndef ESP8266 ... #endif
+  ... resto módulos ESP32 ...
+  MeshNode8266.h      ← API pública (sin guards; seguro incluir desde ambas plataformas)
+  MeshNode8266.cpp    ← #ifdef ESP8266 ... #endif
+examples/
+  arduino/
+    MeshNode8266/     ← Ejemplo ESP8266
+```
+
+Convención de guards en cada archivo:
+
+```cpp
+// Archivos ESP32-only (MeshNetwork.cpp, Router.cpp, etc.)
+#ifndef ESP8266
+// ... implementación completa
+#endif  // ESP8266
+
+// MeshNode8266.cpp
+#ifdef ESP8266
+// ... implementación ESP8266
+#endif  // ESP8266
+```
+
+`Protocol.h` no necesita guards — solo enums y structs válidos en ambas plataformas. PlatformIO selecciona la plataforma mediante el `platform` del environment; el compilador excluye el código irrelevante a través del preprocesador:
+
+```ini
+[env:esp8266-MeshNode8266]
+platform = espressif8266
+framework = arduino
+; build_src_filter no necesario — el preprocesador hace la selección
+```
+
 ## Dependencias externas
 
 | Librería | Versión | Uso |

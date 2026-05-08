@@ -221,12 +221,18 @@
 
 ---
 
-## Fase 14: ESP8266 (librería derivada)
+## Fase 14: ESP8266 (monorepo, directorio `src8266/`)
 
 **Spec:** `openspec/specs/esp8266/spec.md`
 
+> **Decisión de arquitectura:** `MeshNode8266` se implementa en este mismo repositorio bajo `src/`,
+> usando guards `#ifdef ESP8266` / `#ifndef ESP8266` para separar código por plataforma. Enfoque
+> estándar de librerías Arduino multi-plataforma; compatible con el registro de PlatformIO/Arduino
+> Library Manager. Las constantes de protocolo compartidas van en `src/Protocol.h` sin guards.
+> Ver sección "Estructura monorepo" en `design.md`.
+
 - [ ] Implementar `MeshNode8266` con protocolo Proxy MQTT
-  - _Test: ESP8266 compila la librería sin errores_
+  - _Test: ESP8266 compila con `pio run -e esp8266-MeshNode8266` sin errores_
 - [ ] Implementar `PROXY_DISCOVERY` / `PROXY_OFFER` (selección de proxy por RSSI)
   - _Test: ESP8266 selecciona el proxy ESP32 de mejor RSSI_
 - [ ] Implementar `PROXY_PUBLISH` y `PROXY_MESSAGE` (broker → ESP8266)

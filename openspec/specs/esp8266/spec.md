@@ -1,6 +1,11 @@
-# Spec: Soporte ESP8266 — Librería Derivada
+# Spec: Soporte ESP8266 — `src8266/MeshNode8266`
 
 **Referencia:** §10 de EnigmaNG Specs v2.md
+
+> **Estructura:** El código ESP8266 vive en el mismo directorio `src/` del repositorio, usando guards
+> de preprocesador (`#ifdef ESP8266` / `#ifndef ESP8266`) para separar código por plataforma. Es el
+> enfoque estándar de librerías Arduino multi-plataforma y es compatible con el registro de PlatformIO
+> y Arduino Library Manager. Las constantes de protocolo compartidas están en `src/Protocol.h` sin guards.
 
 ## Propósito
 
