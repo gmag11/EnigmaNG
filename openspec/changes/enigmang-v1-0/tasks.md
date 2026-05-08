@@ -221,7 +221,7 @@
 
 ---
 
-## Fase 14: ESP8266 (monorepo, directorio `src8266/`)
+## Fase 14: ESP8266 (monorepo, directorio `src/`)
 
 **Spec:** `openspec/specs/esp8266/spec.md`
 
@@ -231,14 +231,14 @@
 > Library Manager. Las constantes de protocolo compartidas van en `src/Protocol.h` sin guards.
 > Ver sección "Estructura monorepo" en `design.md`.
 
-- [ ] Implementar `MeshNode8266` con protocolo Proxy MQTT
-  - _Test: ESP8266 compila con `pio run -e esp8266-MeshNode8266` sin errores_
-- [ ] Implementar `PROXY_DISCOVERY` / `PROXY_OFFER` (selección de proxy por RSSI)
-  - _Test: ESP8266 selecciona el proxy ESP32 de mejor RSSI_
-- [ ] Implementar `PROXY_PUBLISH` y `PROXY_MESSAGE` (broker → ESP8266)
-  - _Test: ESP8266 publica en topic; mensaje llega al broker MQTT_
-- [ ] Implementar distribución de broker vía provisioning y JOIN_BEACON
-  - _Test: cambio de broker en gateway; ESP8266 actualiza en el siguiente JOIN_BEACON_
+- [x] Implementar `MeshNode8266` con protocolo Proxy MQTT
+  - _Test: ESP8266 compila con `pio run -e esp8266-MeshNode8266` sin errores_ ✓
+- [x] Implementar `PROXY_DISCOVERY` / `PROXY_OFFER` (selección de proxy por RSSI)
+  - _Test: ESP8266 selecciona el proxy ESP32 de mejor RSSI_ ✓
+- [x] Implementar `PROXY_PUBLISH` y `PROXY_MESSAGE` (broker → ESP8266)
+  - _Test: ESP8266 publica en topic; mensaje llega al broker MQTT_ ✓
+- [x] Implementar distribución de broker vía provisioning y JOIN_BEACON
+  - _Test: cambio de broker en gateway; ESP8266 actualiza en el siguiente JOIN_BEACON_ ✓
 
 ---
 

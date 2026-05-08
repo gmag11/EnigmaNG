@@ -232,7 +232,10 @@ bool MeshNetwork::startPrometheus(uint16_t port) {
     return _webUI.startPrometheus(port);
 }
 
-void MeshNetwork::setMqttBroker(const char* host, uint16_t port) {}
+void MeshNetwork::setMqttBroker(const char* host, uint16_t port) {
+    _proxy.setBroker(host, port);
+    _proxy.begin(this);
+}
 
 bool MeshNetwork::setStaticIPTable(const std::vector<std::pair<String, IPAddress>>& table) {
     // Store MAC→IP table in NVS and populate routing table
@@ -319,6 +322,9 @@ void MeshNetwork::loop() {
 
     // Fragment reassembly timeout
     _frag.update();
+
+    // Proxy handler (MQTT ↔ ESP8266 bridge)
+    _proxy.loop();
 }
 
 void MeshNetwork::shutdown() {
@@ -402,6 +408,9 @@ void MeshNetwork::_handleFrame(const uint8_t* srcMac, const uint8_t* data, size_
             break;
         case FrameType::ARP_REPLY:
             _handleArpReply(hdr.srcMac, payload, payloadLen);
+            break;
+        case FrameType::PROXY:
+            _handleProxyFrame(hdr.srcMac, payload, payloadLen);
             break;
         default:
             break;
@@ -839,9 +848,8 @@ bool MeshNetwork::sendData(const uint8_t* dstMac, const uint8_t* data, size_t le
 // ─── Periodic Tasks ───────────────────────────────────────────────────────────
 
 void MeshNetwork::_sendJoinBeacon() {
-    // Payload: channel(1) + localIP(4) + mode(1)
-    // Battery nodes append sleepIntervalSec(4) so neighbors know their timeout
-    uint8_t payload[10];
+    // Payload: channel(1) + localIP(4) + mode(1) [+ sleepSec(4)] [+ brokerLen(1) + broker(N) + port(2)]
+    uint8_t payload[128];
     payload[0] = _channel;
     uint32_t ip = (uint32_t)_localIP;
     memcpy(&payload[1], &ip, 4);
@@ -849,10 +857,22 @@ void MeshNetwork::_sendJoinBeacon() {
 
     size_t payloadLen = 6;
     if (_mode == MESH_BATTERY) {
-        // _sleepIntervalSec is set via setBatteryMode()
         uint32_t sleepSec = _sleepIntervalSec;
         memcpy(&payload[6], &sleepSec, 4);
         payloadLen = 10;
+    }
+
+    // Append broker info if configured (for ESP8266 proxy clients)
+    if (_proxy.hasBroker()) {
+        const char* brokerHost = _proxy.getBrokerHost();
+        uint8_t brokerLen = (uint8_t)strlen(brokerHost);
+        if (payloadLen + 1 + brokerLen + 2 <= sizeof(payload)) {
+            payload[payloadLen] = brokerLen;
+            memcpy(payload + payloadLen + 1, brokerHost, brokerLen);
+            uint16_t port = _proxy.getBrokerPort();
+            memcpy(payload + payloadLen + 1 + brokerLen, &port, 2);
+            payloadLen += 1 + brokerLen + 2;
+        }
     }
 
     _sendBroadcastFrame(FrameType::JOIN_BEACON, Protocol::MESH_INTERNAL, payload, payloadLen);
@@ -980,6 +1000,21 @@ void MeshNetwork::_handleArpReply(const uint8_t* srcMac, const uint8_t* payload,
 
     // Update route table with this IP→MAC mapping (direct neighbor, hopCount=1)
     _router.addRoute(ip, mac, srcMac, 1);
+}
+
+// ─── Proxy Frame Handling ─────────────────────────────────────────────────────
+
+void MeshNetwork::_handleProxyFrame(const uint8_t* srcMac, const uint8_t* payload, size_t len) {
+    if (len < 1) return;
+
+    // PROXY_DISCOVERY is unencrypted (broadcast, pre-handshake)
+    if (payload[0] == (uint8_t)ProxyMsgType::PROXY_DISCOVERY) {
+        _proxy.handleDiscovery(srcMac);
+        return;
+    }
+
+    // All other PROXY frames should be encrypted — already decrypted by _handleData caller
+    _proxy.handleProxyFrame(srcMac, payload, len);
 }
 
 // ─── Key Rotation ─────────────────────────────────────────────────────────────

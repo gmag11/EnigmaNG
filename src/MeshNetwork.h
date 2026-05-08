@@ -18,6 +18,7 @@
 #include "NetifDriver.h"
 #include "Onboarding.h"
 #include "WebUI.h"
+#include "ProxyHandler.h"
 
 enum MeshMode : uint8_t {
     MESH_NODE    = 0,   // Standard node with relay enabled
@@ -119,6 +120,7 @@ private:
     CryptoKeys _keys;
     Onboarding _onboarding;
     WebUI _webUI;
+    ProxyHandler _proxy;
 
     // Sequence counter
     uint16_t _seqCounter = 0;
@@ -164,6 +166,7 @@ private:
     void _handleKeyNack(const uint8_t* srcMac, const uint8_t* payload, size_t len);
     void _handleArpQuery(const uint8_t* srcMac, const uint8_t* payload, size_t len);
     void _handleArpReply(const uint8_t* srcMac, const uint8_t* payload, size_t len);
+    void _handleProxyFrame(const uint8_t* srcMac, const uint8_t* payload, size_t len);
     void _handleData(const uint8_t* srcMac, const MeshFrameHeader& hdr, const uint8_t* payload, size_t len);
 
     // Frame sending

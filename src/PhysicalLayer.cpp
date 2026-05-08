@@ -1,5 +1,10 @@
 #include "PhysicalLayer.h"
 #include <cstring>
+#if !defined(ESP8266)
+#include <esp_wifi.h>
+#else
+#include <ESP8266WiFi.h>
+#endif
 
 MeshPhysicalLayer* MeshPhysicalLayer::_instance = nullptr;
 
@@ -42,8 +47,12 @@ void MeshPhysicalLayer::setChannel(uint8_t channel) {
 }
 
 bool MeshPhysicalLayer::setTxPower(int8_t power) {
+#if !defined(ESP8266)
     // ESP-NOW uses WiFi TX power
     esp_wifi_set_max_tx_power(power * 4); // IDF uses 0.25 dBm units
+#else
+    WiFi.setOutputPower((float)power);
+#endif
     return true;
 }
 

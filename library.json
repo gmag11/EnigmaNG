@@ -2,7 +2,7 @@
     "name": "EnigmaNG",
     "version": "1.0.0",
     "description": "Secure ESP-NOW mesh network with full IP transparency. Nodes communicate using standard TCP/UDP libraries (PubSubClient, HTTPClient, etc.) over a multi-hop encrypted mesh.",
-    "keywords": "mesh, esp-now, esp32, iot, networking, encrypted, ip, transparent",
+    "keywords": "mesh, esp-now, esp32, esp8266, iot, networking, encrypted, ip, transparent, mqtt, proxy",
     "repository": {
         "type": "git",
         "url": "https://github.com/gmag11/EnigmaNG.git"
@@ -16,7 +16,7 @@
     "license": "MIT",
     "homepage": "https://github.com/gmag11/EnigmaNG",
     "frameworks": ["arduino", "espidf"],
-    "platforms": ["espressif32"],
+    "platforms": ["espressif32", "espressif8266"],
     "dependencies": {
         "QuickESPNow": "https://github.com/gmag11/QuickESPNow.git"
     },
