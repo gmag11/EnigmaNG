@@ -4,7 +4,7 @@
     "description": "Portable (native-compilable) subset of EnigmaNG for unit testing on PC",
     "build": {
         "srcDir": "../../src",
-        "includeDir": "../../src",
+        "includeDir": ".",
         "srcFilter": "-<*> +<LinkLayer.cpp> +<PeerManager.cpp> +<Router.cpp> +<Crypto.cpp> +<Fragmentation.cpp> +<ServiceDiscovery.cpp>"
     }
 }
