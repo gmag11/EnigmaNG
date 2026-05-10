@@ -71,7 +71,9 @@ bool MeshNetwork::begin(const char* psk, IPAddress staticIP, MeshMode mode) {
             // NAPT must be enabled on the inside interface (mesh0).
             // Per Espressif docs: "NAPT must be enabled on the interface connecting
             // to the target network" — i.e. the source/inside netif.
-#if defined(IP_NAPT)
+            // Guard mirrors lwip_napt.h exactly: ip_napt_enable is only declared
+            // when both IP_FORWARD and IP_NAPT are non-zero.
+#if IP_FORWARD && IP_NAPT
             MeshNetwork* self = MeshNetwork::_instance;
             if (self) {
                 // IPAddress cast to uint32_t yields lwIP network-byte-order —
