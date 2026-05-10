@@ -14,8 +14,8 @@ MeshNetwork mesh;
 const char* PSK       = "MySecretMeshKey123";
 const uint8_t CHANNEL = 6;
 
-const char* WIFI_SSID = "***REMOVED***";
-const char* WIFI_PASS = "***REMOVED***";
+const char* WIFI_SSID = "YourWiFiSSID";
+const char* WIFI_PASS = "YourWiFiPassword";
 
 // LAN reachability probe (set to 0.0.0.0 to disable)
 const char* LAN_PING_TARGET = "0.0.0.0";

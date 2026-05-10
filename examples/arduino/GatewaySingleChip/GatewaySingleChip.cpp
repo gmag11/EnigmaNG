@@ -12,8 +12,8 @@ const char* PSK       = "MySecretMeshKey123";
 const uint8_t CHANNEL = 6;
 
 // WiFi uplink (not required for basic mesh test — leave empty to skip)
-const char* WIFI_SSID = "***REMOVED***";  // e.g., "YourWiFiSSID"
-const char* WIFI_PASS = "***REMOVED***";  // e.g., "YourWiFiPassword"
+const char* WIFI_SSID = "YourWiFiSSID";  // e.g., "YourWiFiSSID"
+const char* WIFI_PASS = "YourWiFiPassword";  // e.g., "YourWiFiPassword"
 // ────────────────────────────────────────────────────────────────
 
 void onNodeJoin(const uint8_t* mac, IPAddress ip) {
