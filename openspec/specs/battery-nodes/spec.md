@@ -1,69 +1,69 @@
-# Spec: Nodos Batería
+# Spec: Battery Nodes
 
-**Referencia:** §7 de EnigmaNG Specs v2.md
+**Reference:** §7 of EnigmaNG Specs v2.md
 
-## Propósito
+## Purpose
 
-Soporte para nodos ESP32 alimentados por batería que minimizan el consumo mediante deep sleep cíclico. Modelo inspirado en LoRaWAN Clase A.
+Support for battery-powered ESP32 nodes that minimize consumption through cyclic deep sleep. Model inspired by LoRaWAN Class A.
 
-## Ciclo de vida (Clase A)
+## Lifecycle (Class A)
 
 ```
 [DEEP SLEEP] ──(T_sleep)──▶ [WAKE] ──▶ [TX UPLINK] ──▶ [RX1: 2s] ──▶ [RX2: 2s] ──▶ [SLEEP]
 ```
 
-- El nodo solo escucha inmediatamente después de transmitir (2 ventanas RX).
-- Sin polling activo. Radio apagada fuera de las ventanas.
-- `BATTERY_HEARTBEAT_INTERVAL` por defecto: 3600s (1h). Configurable.
+- The node only listens immediately after transmitting (2 RX windows).
+- No active polling. Radio is turned off outside the windows.
+- Default `BATTERY_HEARTBEAT_INTERVAL`: 3600s (1h). Configurable.
 
 ## Parent Node
 
-- El nodo batería elige su Parent durante el join: vecino relay con mejor `avgRssi`.
-- El Parent almacena un buffer FIFO de downlink por hijo:
-  - Máximo 5 mensajes por hijo.
-  - Máximo 200 bytes por mensaje.
-  - Al recibir el UPLINK, vacía el buffer en ventanas RX1 + RX2.
-- Si no llega heartbeat en `3 × HEARTBEAT_INTERVAL`: libera buffer + retira rutas del hijo.
+- The battery node selects its Parent during join: the relay neighbor with best `avgRssi`.
+- The Parent keeps a per-child FIFO downlink buffer:
+  - Maximum 5 messages per child.
+  - Maximum 200 bytes per message.
+  - On receiving the UPLINK, it flushes the buffer during RX1 + RX2 windows.
+- If no heartbeat arrives within `3 × HEARTBEAT_INTERVAL`: it frees the buffer and removes the child's routes.
 
-## Sincronización de reloj
+## Clock synchronization
 
-El Parent incluye un timestamp (segundos UTC aproximados) en la respuesta al UPLINK. El nodo batería almacena el offset en `RTC_DATA_ATTR` (persiste en deep sleep).
+The Parent includes a timestamp (approximate UTC seconds) in the UPLINK response. The battery node stores the offset in `RTC_DATA_ATTR` (persists across deep sleep).
 
-**Usos:**
-- Wake-up precisos con `esp_sleep_enable_timer_wakeup()`.
-- Verificación de expiración de epoch de clave al despertar.
-- Timestamps en telemetría.
+**Uses:**
+- Precise wake-ups with `esp_sleep_enable_timer_wakeup()`.
+- Checking key epoch expiration upon wake.
+- Timestamps in telemetry.
 
-## Redescubrimiento de Parent (lista 3 candidatos en NVS)
+## Parent rediscovery (3 candidates stored in NVS)
 
-El nodo batería almacena en NVS hasta **3 candidatos a Parent** (MAC + última `avgRssi`), actualizada en cada UPLINK exitoso.
+The battery node stores up to **3 Parent candidates** in NVS (MAC + last `avgRssi`), updated on each successful UPLINK.
 
-**Al despertar:**
-1. Intenta UPLINK al Parent primario (4s timeout: RX1 + RX2).
-2. Si no hay ACK → prueba el segundo candidato (4s).
-3. Si no hay ACK → prueba el tercero (4s).
-4. Si los tres fallan → búsqueda ciega de canal (§5.2) + re-join completo.
+**On wake:**
+1. Try UPLINK to primary Parent (4s timeout: RX1 + RX2).
+2. If no ACK → try the second candidate (4s).
+3. If no ACK → try the third (4s).
+4. If all three fail → blind channel scan (§5.2) + full re-join.
 
-**Coste NVS:** ~20 bytes para 3 entradas `(mac[6], rssi[1]) × 3`.
+**NVS cost:** ~20 bytes for 3 entries `(mac[6], rssi[1]) × 3`.
 
-## Gestión de epoch en nodos batería
+## Epoch management in battery nodes
 
-Al despertar del deep sleep, el nodo compara el epoch almacenado en `RTC_DATA_ATTR` con el epoch del primer frame recibido del Parent. Si difieren: inicia renegociación de clave antes de enviar datos.
+On waking from deep sleep, the node compares the epoch stored in `RTC_DATA_ATTR` with the epoch of the first frame received from the Parent. If they differ: start key renegotiation before sending data.
 
-## Modos configurables
+## Configurable modes
 
-| Parámetro | Default | API |
+| Parameter | Default | API |
 |-----------|---------|-----|
 | Sleep interval | 3600s | `setBatteryMode(true, seconds)` |
 | Heartbeat interval | 3600s | `BATTERY_HEARTBEAT_INTERVAL` |
-| RX1 window | 2s | Constante interna |
-| RX2 window | 2s | Constante interna |
-| Max downlink buffer por hijo | 5 msgs | `BATTERY_DOWNLINK_BUFFER_SIZE` |
+| RX1 window | 2s | Internal constant |
+| RX2 window | 2s | Internal constant |
+| Max downlink buffer per child | 5 msgs | `BATTERY_DOWNLINK_BUFFER_SIZE` |
 
-## Criterio de aceptación
+## Acceptance criteria
 
-- Test: nodo batería cicla cada 60s. Envía UPLINK y recibe respuesta en ventana RX1 o RX2.
-- Test: 5 mensajes downlink en buffer. Nodo los recibe todos en las ventanas tras el UPLINK.
-- Test: Parent primario desaparece. Nodo recupera conexión vía candidato secundario sin re-join.
-- Test: epoch cambia durante el deep sleep. Nodo detecta el cambio al despertar y renegocia antes de enviar datos.
-- Test: nodo batería NO actúa como relay (no reenvía frames de otros nodos).
+- Test: battery node cycles every 60s. It sends an UPLINK and receives a response in RX1 or RX2 window.
+- Test: 5 downlink messages in buffer. Node receives them all in the windows after the UPLINK.
+- Test: primary Parent disappears. Node recovers connectivity via secondary candidate without re-joining.
+- Test: epoch changes during deep sleep. Node detects the change on wake and renegotiates before sending data.
+- Test: battery node DOES NOT act as relay (does not forward frames from other nodes).

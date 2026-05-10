@@ -1,12 +1,12 @@
-# Spec: Capa Física (Physical Layer)
+# Spec: Physical Layer
 
-**Referencia:** §3 de EnigmaNG Specs v2.md
+**Reference:** §3 of EnigmaNG Specs v2.md
 
-## Propósito
+## Purpose
 
-Abstracción limpia sobre QuickESPNow/ESP-NOW que el resto de la librería usa como capa de transporte. Provee envío unicast/broadcast, recepción con callback, RSSI por frame y gestión de canal.
+Clean abstraction over QuickESPNow/ESP-NOW used by the rest of the library as the transport layer. Provides unicast/broadcast send, receive callback, RSSI per frame and channel management.
 
-## Interfaz requerida
+## Required interface
 
 ```cpp
 class MeshPhysicalLayer {
@@ -21,37 +21,37 @@ public:
 };
 ```
 
-## Gestión de canal
+## Channel management
 
-- Canal único para toda la red mesh (1–14).
-- En modo single-chip gateway: canal forzado por el AP WiFi al que está conectado (restricción hardware).
-- Cambio de canal: anunciado con `CONTROL/CHANNEL_CHANGE` + timestamp de migración (+30s). Los nodos conservan sus Link Keys.
-- Nodos que pierden contacto tras el cambio inician búsqueda ciega (§5.2).
+- Single channel for the whole mesh (1–14).
+- In single-chip gateway mode: channel forced by the connected WiFi AP (hardware limitation).
+- Channel change: announced with `CONTROL/CHANNEL_CHANGE` + migration timestamp (+30s). Nodes keep their Link Keys.
+- Nodes that lose contact after the change start a blind channel scan (§5.2).
 
-## RSSI y umbral de alcance
+## RSSI and range thresholds
 
-| Parámetro | Valor por defecto | Configurable |
-|-----------|------------------|--------------|
-| `RSSI_CONNECT_THRESHOLD` | -75 dBm | Sí |
-| `RSSI_DISCONNECT_THRESHOLD` | -85 dBm | Sí |
-| Hysteresis | 10 dB | No (derivada) |
-| EWMA α | 0.3 | Sí |
-| `PEER_INACTIVITY_TIMEOUT` | 120s | Sí |
+| Parameter | Default value | Configurable |
+|-----------|----------------|--------------|
+| `RSSI_CONNECT_THRESHOLD` | -75 dBm | Yes |
+| `RSSI_DISCONNECT_THRESHOLD` | -85 dBm | Yes |
+| Hysteresis | 10 dB | No (derived) |
+| EWMA α | 0.3 | Yes |
+| `PEER_INACTIVITY_TIMEOUT` | 120s | Yes |
 
-### Fórmula EWMA
+### EWMA formula
 
 ```
-rssi_avg = 0.3 × rssi_nuevo + 0.7 × rssi_avg
+rssi_avg = 0.3 × new_rssi + 0.7 × rssi_avg
 ```
 
-Si no se recibe ningún frame en `PEER_INACTIVITY_TIMEOUT`, se invalida `rssi_avg`.
+If no frames are received within `PEER_INACTIVITY_TIMEOUT`, `rssi_avg` is invalidated.
 
-## Dependencias
+## Dependencies
 
-- QuickESPNow (librería externa del autor).
+- QuickESPNow (third-party library by the author).
 - ESP-NOW API (IDF via Arduino Core ESP32 3.3.8).
 
-## Criterio de aceptación
+## Acceptance criteria
 
-- Test: 2 ESP32 en canal 6. Enviar 100 frames unicast. Verificar entrega ≥ 95%, RSSI EWMA actualizado tras cada frame.
-- Test: Cambio de canal anunciado. Ambos nodos migran y retoman comunicación sin renegociar clave.
+- Test: 2 ESP32 on channel 6. Send 100 unicast frames. Verify delivery ≥ 95%, RSSI EWMA updated after each frame.
+- Test: announced channel change. Both nodes migrate and resume communication without renegotiating the key.

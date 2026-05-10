@@ -1,17 +1,17 @@
 /**
  * Integration test: Simulated key exchange (ECDH handshake)
  *
- * Escenario:
- *   NodeA y NodeB se "ven" por primera vez en la malla.
- *   - Cada uno genera un par de claves ECDH.
- *   - Intercambian sus claves públicas (simulado: asignación directa en memoria).
- *   - Ambos derivan el secreto compartido con computeSharedSecret().
- *   - Ambos derivan la LinkKey con deriveLinkKey() — resultado debe ser idéntico.
- *   - Se verifica que la LinkKey permite cifrar en un extremo y descifrar en el otro.
+ * Scenario:
+ *   NodeA and NodeB see each other for the first time on the mesh.
+ *   - Each generates an ECDH key pair.
+ *   - They exchange public keys (simulated: direct memory assignment).
+ *   - Both derive the shared secret with computeSharedSecret().
+ *   - Both derive the LinkKey with deriveLinkKey() — results must match.
+ *   - Verify the LinkKey allows encryption on one end and decryption on the other.
  *
- * NOTA: En PC usamos stubs de mbedtls (ceros). Las pruebas verifican el FLUJO del
- * protocolo (llamadas en orden correcto, parámetros correctos). La corrección
- * criptográfica real se valida sobre hardware con mbedtls completo.
+ * NOTE: On PC we use mbedtls stubs (zeros). Tests verify the protocol FLOW
+ * (calls in correct order, correct parameters). Cryptographic correctness
+ * is validated on hardware with full mbedtls.
  */
 
 #include <unity.h>
@@ -23,7 +23,7 @@ void setUp(void) {}
 void tearDown(void) {}
 
 // ---------------------------------------------------------------------------
-// Test 1: Flujo de generación de claves — ambas llamadas deben tener éxito
+// Test 1: Keypair generation flow — both calls must succeed
 // ---------------------------------------------------------------------------
 void test_keypair_generation_succeeds(void) {
     uint8_t pubA[MESH_ECDH_KEY_SIZE], privA[MESH_ECDH_KEY_SIZE];
@@ -34,8 +34,8 @@ void test_keypair_generation_succeeds(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 2: Cómputo del secreto compartido — ambas llamadas deben tener éxito
-//         y producir el mismo resultado (propiedad ECDH)
+// Test 2: Shared secret computation — both calls must succeed
+//         and produce the same result (ECDH symmetry)
 // ---------------------------------------------------------------------------
 void test_ecdh_shared_secret_symmetric(void) {
     uint8_t pubA[MESH_ECDH_KEY_SIZE], privA[MESH_ECDH_KEY_SIZE];
@@ -56,7 +56,7 @@ void test_ecdh_shared_secret_symmetric(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 3: Derivación de LinkKey — ambos nodos obtienen la misma clave
+// Test 3: LinkKey derivation — both nodes obtain the same key
 // ---------------------------------------------------------------------------
 void test_link_key_derivation_symmetric(void) {
     const char* psk = "TestNetworkPSK!1";
@@ -86,7 +86,7 @@ void test_link_key_derivation_symmetric(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 4: Cifrado extremo-a-extremo con la LinkKey derivada
+// Test 4: End-to-end encryption with the derived LinkKey
 // ---------------------------------------------------------------------------
 void test_encrypt_decrypt_with_link_key(void) {
     const char* psk = "TestNetworkPSK!1";
@@ -139,7 +139,7 @@ void test_encrypt_decrypt_with_link_key(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 5: Nonce determinista — mismo epoch+seq+MAC siempre produce el mismo nonce
+// Test 5: Deterministic nonce — same epoch+seq+MAC always produces same nonce
 // ---------------------------------------------------------------------------
 void test_nonce_deterministic(void) {
     uint8_t mac[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
@@ -152,7 +152,7 @@ void test_nonce_deterministic(void) {
     TEST_ASSERT_EQUAL_MEMORY_MESSAGE(nonce1, nonce2, MESH_GCM_NONCE_SIZE,
                                      "Same inputs must produce same nonce");
 
-    // Nonce con epoch diferente debe diferir
+    // Nonce with different epoch must differ
     uint8_t nonce3[MESH_GCM_NONCE_SIZE];
     Crypto::buildNonce(4, 1234, mac, nonce3);
     bool differ = memcmp(nonce1, nonce3, MESH_GCM_NONCE_SIZE) != 0;

@@ -1,24 +1,24 @@
 /**
- * Unit tests: cifrado y descifrado de cada tipo de frame de la mesh
+ * Unit tests: encryption and decryption for each mesh frame type
  *
- * Verifica que:
- *  1. Los frames que DEBEN cifrarse producen ciphertext distinto del plaintext.
- *  2. El ciphertext NO contiene el plaintext original (sin fuga de datos).
- *  3. El receptor puede descifrar y recuperar exactamente el plaintext original.
- *  4. Los frames que NO se cifran contienen los bytes esperados en claro.
- *  5. Una clave incorrecta hace fallar la autenticación GCM.
- *  6. Un frame manipulado (byte flipped) no pasa la verificación GCM.
+ * Verifies that:
+ *  1. Frames that MUST be encrypted produce ciphertext different from plaintext.
+ *  2. Ciphertext does NOT contain the original plaintext (no data leak).
+ *  3. The receiver can decrypt and recover the exact original plaintext.
+ *  4. Frames that are NOT encrypted contain the expected clear bytes.
+ *  5. A wrong key causes AES-GCM authentication to fail.
+ *  6. A tampered frame (flipped byte) fails GCM verification.
  *
- * Anillos de cifrado según spec §4.2–§4.4:
- *   - NetworkKey : frames broadcast  → ROUTE_ADV, ROUTE_WITHDRAW, ARP_QUERY,
- *                                      ARP_REPLY, SERVICE_QUERY, SERVICE_REPLY,
- *                                      KEY_NACK, CONTROL
- *   - LinkKey    : frames unicast    → DATA, DATA_FRAG, KEY_EXCH_CONFIRM, PROXY
- *   - Sin cifrar : KEY_EXCH_HELLO, KEY_EXCH_REPLY, JOIN_BEACON
+ * Encryption rings per spec §4.2–§4.4:
+ *   - NetworkKey : broadcast frames → ROUTE_ADV, ROUTE_WITHDRAW, ARP_QUERY,
+ *                                        ARP_REPLY, SERVICE_QUERY, SERVICE_REPLY,
+ *                                        KEY_NACK, CONTROL
+ *   - LinkKey    : unicast frames   → DATA, DATA_FRAG, KEY_EXCH_CONFIRM, PROXY
+ *   - Plaintext  : KEY_EXCH_HELLO, KEY_EXCH_REPLY, JOIN_BEACON
  *
- * NOTA: En PC los stubs de mbedtls operan con ceros, por lo que la corrección
- * criptográfica real se valida sobre hardware. Aquí se verifica el flujo
- * (parámetros correctos, estructura de frame, propiedad de autenticación GCM).
+ * NOTE: On PC mbedtls stubs operate with zeros, so cryptographic correctness
+ * is validated on hardware. Here we check the flow (correct parameters,
+ * frame structure, and GCM authentication properties).
  */
 
 #include <unity.h>
@@ -29,7 +29,7 @@
 #include "ServiceDiscovery.h"
 
 // ---------------------------------------------------------------------------
-// Constantes de prueba
+// Test constants
 // ---------------------------------------------------------------------------
 static const char*   PSK     = "TestNetworkPSK!1";
 static const uint8_t MAC_A[] = {0xAA, 0x11, 0x22, 0x33, 0x44, 0x55};
@@ -39,14 +39,14 @@ static const uint8_t MAC_BC[]= {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};  // broadca
 // Claves compartidas para todos los tests (derivadas en setUp global)
 static uint8_t g_networkKey[MESH_KEY_SIZE];
 static uint8_t g_networkId[MESH_NETWORK_ID_SIZE];
-static uint8_t g_linkKeyA[MESH_KEY_SIZE];   // LinkKey NodeA→B (y B→A, es simétrica)
+static uint8_t g_linkKeyA[MESH_KEY_SIZE];   // LinkKey NodeA→B (and B→A, symmetric)
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 /**
- * Construye el header de un frame y lo serializa en @p headerBuf (22 bytes).
+ * Build the frame header and serialize it into @p headerBuf (22 bytes).
  */
 static void buildHeader(uint8_t* headerBuf,
                         FrameType type,
@@ -71,10 +71,10 @@ static void buildHeader(uint8_t* headerBuf,
 }
 
 /**
- * Construye un frame completo cifrado:
+ * Build a complete encrypted frame:
  *   frame = header(22) || ciphertext(ptLen) || tag(MESH_GCM_TAG_SIZE)
  *
- * @return  Tamaño total del frame, o 0 si falla el cifrado.
+ * @return  Total frame size, or 0 if encryption fails.
  */
 static size_t buildEncryptedFrame(FrameType type, Protocol proto,
                                   const uint8_t* srcMac, const uint8_t* dstMac,
@@ -88,11 +88,11 @@ static size_t buildEncryptedFrame(FrameType type, Protocol proto,
     // 1. Header = AAD
     buildHeader(frame, type, proto, srcMac, dstMac, networkId, epoch, seq);
 
-    // 2. Nonce desde header fields
+    // 2. Nonce from header fields
     uint8_t nonce[MESH_GCM_NONCE_SIZE];
     Crypto::buildNonce(epoch, seq, srcMac, nonce);
 
-    // 3. Cifrar payload: ciphertext y tag van tras el header
+    // 3. Encrypt payload: ciphertext and tag go after the header
     uint8_t* ciphertext = frame + MESH_HEADER_SIZE;
     uint8_t* tag        = ciphertext + ptLen;
 
@@ -106,9 +106,9 @@ static size_t buildEncryptedFrame(FrameType type, Protocol proto,
 }
 
 /**
- * Descifra un frame producido por buildEncryptedFrame.
+ * Decrypt a frame produced by buildEncryptedFrame.
  *
- * @return  true si GCM ok y @p plaintextOut contiene el payload original.
+ * @return  true if GCM ok and @p plaintextOut contains the original payload.
  */
 static bool decryptFrame(const uint8_t* frame, size_t frameLen,
                          const uint8_t* key,
@@ -132,8 +132,8 @@ static bool decryptFrame(const uint8_t* frame, size_t frameLen,
 }
 
 /**
- * Comprueba que @p plaintext no aparece como subsecuencia de bytes en @p buf.
- * Devuelve true si el plaintext NO está presente (correcto: datos cifrados).
+ * Check that @p plaintext does not appear as a byte subsequence in @p buf.
+ * Returns true if the plaintext is NOT present (correct: data encrypted).
  */
 static bool noPlaintextLeak(const uint8_t* buf, size_t bufLen,
                             const uint8_t* plaintext, size_t ptLen)
@@ -153,7 +153,7 @@ void setUp(void) {}
 void tearDown(void) {}
 
 // ---------------------------------------------------------------------------
-// Derivación de claves (ejecutado antes de todos los tests)
+// Key derivation (executed before all tests)
 // ---------------------------------------------------------------------------
 
 static void deriveTestKeys(void) {
@@ -163,7 +163,7 @@ static void deriveTestKeys(void) {
     memcpy(g_networkKey, nk.networkKey, MESH_KEY_SIZE);
     memcpy(g_networkId,  nk.networkId,  MESH_NETWORK_ID_SIZE);
 
-    // LinkKey A↔B mediante ECDH simulado
+    // LinkKey A↔B via simulated ECDH
     uint8_t pubA[MESH_ECDH_KEY_SIZE], privA[MESH_ECDH_KEY_SIZE];
     uint8_t pubB[MESH_ECDH_KEY_SIZE], privB[MESH_ECDH_KEY_SIZE];
     Crypto::generateKeyPair(pubA, privA);
@@ -174,7 +174,7 @@ static void deriveTestKeys(void) {
 }
 
 // ---------------------------------------------------------------------------
-// ── FRAMES UNICAST cifrados con LinkKey ──────────────────────────────────
+// ── UNICAST FRAMES encrypted with LinkKey ─────────────────────────────────
 // ---------------------------------------------------------------------------
 
 // ── DATA ────────────────────────────────────────────────────────────────────
@@ -246,7 +246,7 @@ void test_data_frag_frame_encrypted_and_decryptable(void) {
 
 // ── KEY_EXCH_CONFIRM ─────────────────────────────────────────────────────────
 void test_key_exch_confirm_encrypted_and_decryptable(void) {
-    // Payload: challenge = nonceA XOR nonceB (spec §4.3), aquí simulado con 16B fijos
+    // Payload: challenge = nonceA XOR nonceB (spec §4.3), here simulated with 16 fixed bytes
     uint8_t nonceA[16], nonceB[16];
     memset(nonceA, 0xAA, sizeof(nonceA));
     memset(nonceB, 0x55, sizeof(nonceB));
@@ -279,7 +279,7 @@ void test_key_exch_confirm_encrypted_and_decryptable(void) {
 
 // ── PROXY ────────────────────────────────────────────────────────────────────
 void test_proxy_frame_encrypted_and_decryptable(void) {
-    // Payload: dirección IP destino (4B) + datos proxeados
+    // Payload: destination IP (4B) + proxied data
     const uint8_t payload[] = {192, 168, 1, 100, 0x08, 0x00, 0x45, 0x00,
                                 0x00, 0x28, 0x00, 0x01, 0x00, 0x00, 0x40, 0x06};
     const size_t  ptLen     = sizeof(payload);
@@ -308,7 +308,7 @@ void test_proxy_frame_encrypted_and_decryptable(void) {
 }
 
 // ---------------------------------------------------------------------------
-// ── FRAMES BROADCAST cifrados con NetworkKey ─────────────────────────────
+// ── BROADCAST FRAMES encrypted with NetworkKey ───────────────────────────
 // ---------------------------------------------------------------------------
 
 // ── ROUTE_ADV ────────────────────────────────────────────────────────────────
@@ -442,7 +442,7 @@ void test_service_query_encrypted_and_decryptable(void) {
 
     TEST_ASSERT_GREATER_THAN_MESSAGE(0, frameLen, "SERVICE_QUERY: buildEncryptedFrame failed");
 
-    // El nombre del servicio no debe aparecer en claro en el frame
+    // The service name must not appear in plaintext inside the frame
     TEST_ASSERT_TRUE_MESSAGE(
         noPlaintextLeak(frame + MESH_HEADER_SIZE, frameLen - MESH_HEADER_SIZE,
                         (const uint8_t*)"_mqtt._tcp", strlen("_mqtt._tcp")),
@@ -517,43 +517,43 @@ void test_key_nack_encrypted_and_decryptable(void) {
 }
 
 // ---------------------------------------------------------------------------
-// ── FRAMES SIN CIFRAR ────────────────────────────────────────────────────
+// ── PLAINTEXT FRAMES (not encrypted) ────────────────────────────────────
 // ---------------------------------------------------------------------------
 
 // ── KEY_EXCH_HELLO ──────────────────────────────────────────────────────────
 void test_key_exch_hello_is_plaintext(void) {
-    // Payload: pubKey(32B) + nonce(32B), sin cifrar
+    // Payload: pubKey(32B) + nonce(32B), not encrypted
     uint8_t pubA[MESH_ECDH_KEY_SIZE], privA[MESH_ECDH_KEY_SIZE];
     Crypto::generateKeyPair(pubA, privA);
 
     uint8_t helloPayload[MESH_ECDH_KEY_SIZE * 2] = {};
     memcpy(helloPayload, pubA, MESH_ECDH_KEY_SIZE);
-    // nonce: bytes marcados con 0xBB para detección visual
+    // nonce: bytes marked with 0xBB for visual inspection
     memset(helloPayload + MESH_ECDH_KEY_SIZE, 0xBB, MESH_ECDH_KEY_SIZE);
 
     uint16_t networkId = ((uint16_t)g_networkId[0] << 8) | g_networkId[1];
 
-    // Frame sin cifrar: header || payload (sin tag GCM)
+    // Unencrypted frame: header || payload (no GCM tag)
     uint8_t frame[MESH_FRAME_MAX_SIZE] = {};
     buildHeader(frame, FrameType::KEY_EXCH_HELLO, Protocol::MESH_INTERNAL,
                 MAC_A, MAC_BC, networkId, 0, 50);
     memcpy(frame + MESH_HEADER_SIZE, helloPayload, sizeof(helloPayload));
     size_t frameLen = MESH_HEADER_SIZE + sizeof(helloPayload);
 
-    // El payload debe ser directamente legible (sin descifrado): la clave pública
-    // que copiamos debe aparecer en claro en el frame
+    // The payload must be directly readable (no decryption): the public key
+    // we copied must appear in clear in the frame
     const uint8_t* rawPayload = frame + MESH_HEADER_SIZE;
     TEST_ASSERT_EQUAL_MEMORY_MESSAGE(pubA, rawPayload, MESH_ECDH_KEY_SIZE,
                                      "KEY_EXCH_HELLO: public key must be readable in plaintext");
 
-    // El nonce también debe aparecer en claro
+    // The nonce must also appear in clear
     const uint8_t expectedNonce[MESH_ECDH_KEY_SIZE] = {};
     memset((void*)expectedNonce, 0xBB, MESH_ECDH_KEY_SIZE);
     TEST_ASSERT_EQUAL_MEMORY_MESSAGE(expectedNonce, rawPayload + MESH_ECDH_KEY_SIZE,
                                      MESH_ECDH_KEY_SIZE,
                                      "KEY_EXCH_HELLO: nonce must be readable in plaintext");
 
-    // El header debe ser válido
+    // The header must be valid
     MeshFrameHeader h = {};
     TEST_ASSERT_TRUE(LinkLayer::deserializeHeader(frame, frameLen, h));
     TEST_ASSERT_EQUAL((uint8_t)FrameType::KEY_EXCH_HELLO, h.frameType);
@@ -589,7 +589,7 @@ void test_key_exch_reply_is_plaintext(void) {
 
 // ── JOIN_BEACON ──────────────────────────────────────────────────────────────
 void test_join_beacon_is_plaintext(void) {
-    // Payload: channel(1B) + networkId(2B) = 3 bytes, sin cifrar
+    // Payload: channel(1B) + networkId(2B) = 3 bytes, not encrypted
     // (El nodo sin provisionar necesita leerlo antes de tener ninguna clave)
     const uint8_t channel   = 6;
     const uint16_t networkId = ((uint16_t)g_networkId[0] << 8) | g_networkId[1];
@@ -605,7 +605,7 @@ void test_join_beacon_is_plaintext(void) {
     memcpy(frame + MESH_HEADER_SIZE, payload, sizeof(payload));
     size_t frameLen = MESH_HEADER_SIZE + sizeof(payload);
 
-    // Canal y networkId deben ser legibles sin descifrar
+    // Channel and networkId must be readable without decryption
     const uint8_t* rawPayload = frame + MESH_HEADER_SIZE;
     TEST_ASSERT_EQUAL_MESSAGE(channel, rawPayload[0],
                               "JOIN_BEACON: channel must be readable in plaintext");
@@ -621,10 +621,10 @@ void test_join_beacon_is_plaintext(void) {
 }
 
 // ---------------------------------------------------------------------------
-// ── Propiedades de seguridad del cifrado ────────────────────────────────────
+// ── Security properties of encryption ─────────────────────────────────────
 // ---------------------------------------------------------------------------
 
-// ── Clave incorrecta → autenticación GCM falla ──────────────────────────────
+// ── Wrong key → GCM authentication fails ───────────────────────────────────
 void test_wrong_key_fails_authentication(void) {
     const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
     const size_t  ptLen     = sizeof(payload);
@@ -645,7 +645,7 @@ void test_wrong_key_fails_authentication(void) {
                               "Wrong key must cause GCM authentication failure");
 }
 
-// ── Frame manipulado → autenticación GCM falla ──────────────────────────────
+// ── Tampered frame → GCM authentication fails ──────────────────────────────
 void test_tampered_frame_fails_authentication(void) {
     const uint8_t payload[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE};
     const size_t  ptLen     = sizeof(payload);
@@ -668,7 +668,7 @@ void test_tampered_frame_fails_authentication(void) {
                               "Tampered ciphertext must cause GCM authentication failure");
 }
 
-// ── Header manipulado (AAD) → autenticación GCM falla ───────────────────────
+// ── Tampered header (AAD) → GCM authentication fails ───────────────────────
 void test_tampered_header_aad_fails_authentication(void) {
     const uint8_t payload[] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
     const size_t  ptLen     = sizeof(payload);
@@ -682,7 +682,7 @@ void test_tampered_header_aad_fails_authentication(void) {
         frame, sizeof(frame));
     TEST_ASSERT_GREATER_THAN(0, frameLen);
 
-    // Cambiar el sequence number en el header (AAD) sin re-cifrar
+    // Change the sequence number in the header (AAD) without re-encrypting
     frame[21] ^= 0xFF;
 
     uint8_t recovered[sizeof(payload)] = {};
@@ -709,7 +709,7 @@ void test_same_nonce_same_ciphertext_determinism(void) {
         g_linkKeyA, payload, ptLen, frame2, sizeof(frame2));
 
     TEST_ASSERT_EQUAL(frameLen1, frameLen2);
-    // AES-GCM con mismos parámetros produce el mismo ciphertext (determinista)
+    // AES-GCM with same parameters produces the same ciphertext (deterministic)
     TEST_ASSERT_EQUAL_MEMORY_MESSAGE(frame1 + MESH_HEADER_SIZE,
                                      frame2 + MESH_HEADER_SIZE,
                                      ptLen,
@@ -720,8 +720,8 @@ void test_same_nonce_same_ciphertext_determinism(void) {
 // ── Tests adicionales de fidelidad (recomendaciones del experto) ────────────
 // ---------------------------------------------------------------------------
 
-// ── 1. Nonce único: distinto seq → distinto nonce → distinto ciphertext ──────
-// Garantiza que el sistema no reutiliza nonces entre frames consecutivos.
+// ── 1. Unique nonce: different seq → different nonce → different ciphertext ─
+// Ensures the system does not reuse nonces between consecutive frames.
 void test_consecutive_frames_have_different_nonces(void) {
     const uint8_t payload[] = {0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04};
     const size_t  ptLen     = sizeof(payload);
@@ -749,7 +749,7 @@ void test_consecutive_frames_have_different_nonces(void) {
     TEST_ASSERT_FALSE_MESSAGE(memcmp(cipher1, cipher2, ptLen) == 0,
                               "Consecutive frames must produce different ciphertexts (unique nonces)");
 
-    // Ambos frames deben poder descifrarse correctamente
+    // Both frames must be decryptable correctly
     uint8_t rec1[sizeof(payload)] = {}, rec2[sizeof(payload)] = {};
     TEST_ASSERT_TRUE(decryptFrame(frame1, frameLen1, g_linkKeyA, rec1, ptLen));
     TEST_ASSERT_TRUE(decryptFrame(frame2, frameLen2, g_linkKeyA, rec2, ptLen));
@@ -757,8 +757,8 @@ void test_consecutive_frames_have_different_nonces(void) {
     TEST_ASSERT_EQUAL_MEMORY(payload, rec2, ptLen);
 }
 
-// ── 2a. Tamaño límite inferior: payload de 0 bytes ───────────────────────────
-// Solo existe el header (AAD) y el GCM tag; no hay ciphertext.
+// ── 2a. Lower bound size: 0-byte payload ──────────────────────────────────
+// Only the header (AAD) and the GCM tag exist; there is no ciphertext.
 void test_zero_byte_payload_encrypt_decrypt(void) {
     uint16_t networkId = ((uint16_t)g_networkId[0] << 8) | g_networkId[1];
 
@@ -769,17 +769,17 @@ void test_zero_byte_payload_encrypt_decrypt(void) {
         g_linkKeyA, nullptr, 0,
         frame, sizeof(frame));
 
-    // frameLen debe ser exactamente MESH_HEADER_SIZE + MESH_GCM_TAG_SIZE
+    // frameLen must be exactly MESH_HEADER_SIZE + MESH_GCM_TAG_SIZE
     TEST_ASSERT_EQUAL_MESSAGE(MESH_HEADER_SIZE + MESH_GCM_TAG_SIZE, (int)frameLen,
                               "Zero-byte payload frame must be header + tag only");
 
-    // Debe poder descifrarse (y recuperar 0 bytes)
+    // It must be decryptable (and recover 0 bytes)
     uint8_t dummy[1] = {};
     TEST_ASSERT_TRUE_MESSAGE(decryptFrame(frame, frameLen, g_linkKeyA, dummy, 0),
                              "Zero-byte payload must decrypt successfully");
 }
 
-// ── 2b. Tamaño límite superior: payload de MESH_MAX_PAYLOAD bytes ─────────────
+// ── 2b. Upper bound size: payload of MESH_MAX_PAYLOAD bytes ───────────────
 void test_max_payload_encrypt_decrypt(void) {
     uint8_t payload[MESH_MAX_PAYLOAD];
     for (size_t i = 0; i < MESH_MAX_PAYLOAD; i++) payload[i] = (uint8_t)(i & 0xFF);
@@ -810,8 +810,8 @@ void test_max_payload_encrypt_decrypt(void) {
                                      "Max-payload: decrypted payload must match original");
 }
 
-// ── 3. Integridad de posición del tag ────────────────────────────────────────
-// Verifica que el tag GCM está exactamente en frame[MESH_HEADER_SIZE + ptLen]
+// ── 3. Tag position integrity ─────────────────────────────────────────────
+// Verifies that the GCM tag is exactly at frame[MESH_HEADER_SIZE + ptLen]
 // y tiene MESH_GCM_TAG_SIZE bytes de longitud.
 void test_tag_position_and_size_in_frame(void) {
     const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
@@ -826,7 +826,7 @@ void test_tag_position_and_size_in_frame(void) {
 
     TEST_ASSERT_EQUAL((int)(MESH_HEADER_SIZE + ptLen + MESH_GCM_TAG_SIZE), (int)frameLen);
 
-    // Extraer el tag desde la posición esperada
+    // Extract the tag from the expected position
     const uint8_t* tagInFrame = frame + MESH_HEADER_SIZE + ptLen;
 
     // Recifrar independientemente para obtener el tag de referencia
@@ -841,7 +841,7 @@ void test_tag_position_and_size_in_frame(void) {
     TEST_ASSERT_EQUAL_MEMORY_MESSAGE(refTag, tagInFrame, MESH_GCM_TAG_SIZE,
                                      "GCM tag must be located at frame[MESH_HEADER_SIZE + ptLen]");
 
-    // Corromper solo el tag y verificar que el descifrado falla
+    // Corrupt only the tag and verify that decryption fails
     uint8_t corrupted[MESH_FRAME_MAX_SIZE];
     memcpy(corrupted, frame, frameLen);
     corrupted[MESH_HEADER_SIZE + ptLen] ^= 0xFF;  // primer byte del tag
@@ -852,7 +852,7 @@ void test_tag_position_and_size_in_frame(void) {
 }
 
 // ── 4. Propiedad AAD: mismo plaintext+key+nonce, AAD diferente → tag diferente ─
-// Garantiza que el header (AAD) está criptográficamente ligado al ciphertext.
+// Ensures the header (AAD) is cryptographically bound to the ciphertext.
 void test_different_aad_produces_different_tag(void) {
     const uint8_t payload[] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11};
     const size_t  ptLen     = sizeof(payload);
@@ -880,7 +880,7 @@ void test_different_aad_produces_different_tag(void) {
     TEST_ASSERT_FALSE_MESSAGE(memcmp(tag1, tag2, MESH_GCM_TAG_SIZE) == 0,
                               "Different AAD must produce different GCM tag");
 
-    // Intentar descifrar frame1 con el tag de frame2 debe fallar:
+    // Attempting to decrypt frame1 with frame2's tag must fail:
     // reemplazar el tag en una copia de frame1 con el tag de frame2
     uint8_t tampered[MESH_FRAME_MAX_SIZE];
     memcpy(tampered, frame1, frameLen1);
@@ -918,7 +918,7 @@ void test_different_nonce_produces_different_ciphertext(void) {
     TEST_ASSERT_FALSE_MESSAGE(memcmp(cipher1, cipher2, ptLen) == 0,
                               "Different nonce must produce different ciphertext");
 
-    // Ambos deben descifrarse correctamente con su propio frame
+    // Both must decrypt correctly with their own frame
     uint8_t rec1[sizeof(payload)] = {}, rec2[sizeof(payload)] = {};
     TEST_ASSERT_TRUE(decryptFrame(frame1, fl1, g_linkKeyA, rec1, ptLen));
     TEST_ASSERT_TRUE(decryptFrame(frame2, fl2, g_linkKeyA, rec2, ptLen));
@@ -936,12 +936,12 @@ void setup() {
     delay(2000);
     deriveTestKeys();
     UNITY_BEGIN();
-    // Frames unicast – LinkKey
+    // Unicast frames – LinkKey
     RUN_TEST(test_data_frame_encrypted_and_decryptable);
     RUN_TEST(test_data_frag_frame_encrypted_and_decryptable);
     RUN_TEST(test_key_exch_confirm_encrypted_and_decryptable);
     RUN_TEST(test_proxy_frame_encrypted_and_decryptable);
-    // Frames broadcast – NetworkKey
+    // Broadcast frames – NetworkKey
     RUN_TEST(test_route_adv_encrypted_and_decryptable);
     RUN_TEST(test_route_withdraw_encrypted_and_decryptable);
     RUN_TEST(test_arp_query_encrypted_and_decryptable);
@@ -949,16 +949,16 @@ void setup() {
     RUN_TEST(test_service_query_encrypted_and_decryptable);
     RUN_TEST(test_service_reply_encrypted_and_decryptable);
     RUN_TEST(test_key_nack_encrypted_and_decryptable);
-    // Frames sin cifrar
+    // Unencrypted frames
     RUN_TEST(test_key_exch_hello_is_plaintext);
     RUN_TEST(test_key_exch_reply_is_plaintext);
     RUN_TEST(test_join_beacon_is_plaintext);
-    // Propiedades de seguridad
+    // Security properties
     RUN_TEST(test_wrong_key_fails_authentication);
     RUN_TEST(test_tampered_frame_fails_authentication);
     RUN_TEST(test_tampered_header_aad_fails_authentication);
     RUN_TEST(test_same_nonce_same_ciphertext_determinism);
-    // Tests de fidelidad adicionales
+    // Additional fidelity tests
     RUN_TEST(test_consecutive_frames_have_different_nonces);
     RUN_TEST(test_zero_byte_payload_encrypt_decrypt);
     RUN_TEST(test_max_payload_encrypt_decrypt);
@@ -972,12 +972,12 @@ void loop() {}
 int main(int argc, char** argv) {
     deriveTestKeys();
     UNITY_BEGIN();
-    // Frames unicast – LinkKey
+    // Unicast frames – LinkKey
     RUN_TEST(test_data_frame_encrypted_and_decryptable);
     RUN_TEST(test_data_frag_frame_encrypted_and_decryptable);
     RUN_TEST(test_key_exch_confirm_encrypted_and_decryptable);
     RUN_TEST(test_proxy_frame_encrypted_and_decryptable);
-    // Frames broadcast – NetworkKey
+    // Broadcast frames – NetworkKey
     RUN_TEST(test_route_adv_encrypted_and_decryptable);
     RUN_TEST(test_route_withdraw_encrypted_and_decryptable);
     RUN_TEST(test_arp_query_encrypted_and_decryptable);
@@ -985,16 +985,16 @@ int main(int argc, char** argv) {
     RUN_TEST(test_service_query_encrypted_and_decryptable);
     RUN_TEST(test_service_reply_encrypted_and_decryptable);
     RUN_TEST(test_key_nack_encrypted_and_decryptable);
-    // Frames sin cifrar
+    // Unencrypted frames
     RUN_TEST(test_key_exch_hello_is_plaintext);
     RUN_TEST(test_key_exch_reply_is_plaintext);
     RUN_TEST(test_join_beacon_is_plaintext);
-    // Propiedades de seguridad
+    // Security properties
     RUN_TEST(test_wrong_key_fails_authentication);
     RUN_TEST(test_tampered_frame_fails_authentication);
     RUN_TEST(test_tampered_header_aad_fails_authentication);
     RUN_TEST(test_same_nonce_same_ciphertext_determinism);
-    // Tests de fidelidad adicionales
+    // Additional fidelity tests
     RUN_TEST(test_consecutive_frames_have_different_nonces);
     RUN_TEST(test_zero_byte_payload_encrypt_decrypt);
     RUN_TEST(test_max_payload_encrypt_decrypt);

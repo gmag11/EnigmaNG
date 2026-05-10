@@ -1,51 +1,51 @@
 # Spec: Routing (Distance Vector)
 
-**Referencia:** §6 de EnigmaNG Specs v2.md
+**Reference:** §6 of EnigmaNG Specs v2.md
 
-## Propósito
+## Purpose
 
-Routing proactivo multi-hop sobre la mesh ESP-NOW, basado en Distance Vector (estilo RIPv2), con prevención de bucles mediante Seen-Frame Cache + Split Horizon + Poison Reverse.
+Proactive multi-hop routing over the ESP-NOW mesh based on Distance Vector (RIPv2-like), with loop prevention using a Seen-Frame Cache + Split Horizon + Poison Reverse.
 
-## Tabla de routing unificada (IP ↔ MAC ↔ NextHop)
+## Unified routing table (IP ↔ MAC ↔ NextHop)
 
 ```cpp
 struct RouteEntry {
-    uint32_t ip;          // 4B — IPv4 destino
-    uint8_t  mac[6];      // 6B — MAC destino final
-    uint8_t  nextHop[6];  // 6B — MAC siguiente salto
+    uint32_t ip;          // 4B — destination IPv4
+    uint8_t  mac[6];      // 6B — final destination MAC
+    uint8_t  nextHop[6];  // 6B — next hop MAC
     uint8_t  hopCount;    // 1B — 0=local, 255=Poison Reverse
-    int8_t   rssi;        // 1B — RSSI al nextHop
+    int8_t   rssi;        // 1B — RSSI to nextHop
     uint32_t lastUpdate;  // 4B — millis()
-    uint16_t ttl;         // 2B — segundos hasta expirar
+    uint16_t ttl;         // 2B — seconds until expiry
     uint8_t  flags;       // 1B — IS_GATEWAY|IS_BATTERY|IS_DIRECT
 };
 // sizeof(RouteEntry) = 25 bytes
-// Pool estático: 64 entradas = 1.600 bytes
+// Static pool: 64 entries = 1,600 bytes
 ```
 
 ## Route Advertisement (ROUTE_ADV)
 
-- **Intervalo base:** `RA_INTERVAL` = 30s.
-- **Triggered update:** Cambio de topología → RA inmediato + reinicio timer.
-- **Formato de entrada (12 bytes cada una):**
+- **Base interval:** `RA_INTERVAL` = 30s.
+- **Triggered update:** topology change → immediate RA + timer reset.
+- **Entry format (12 bytes each):**
   ```
-  [IPv4: 4B][MAC_destino: 6B][HopCount: 1B][Flags: 1B]
+  [IPv4: 4B][MAC_dest: 6B][HopCount: 1B][Flags: 1B]
   ```
-  El `nextHop` no se incluye: es el emisor del RA.
-- **Capacidad por frame:** 18 entradas IPv4 (216B / 12B = 18 exacto → frame de 250B exactos).
-- **Continuación:** Si tabla > 18 entradas, múltiples RA con flag `RA_CONTINUATION`.
+  The `nextHop` is not included: it is the RA sender.
+- **Capacity per frame:** 18 IPv4 entries (216B / 12B = 18 exact → 250B frame fits exactly).
+- **Continuation:** If table > 18 entries, multiple RAs with `RA_CONTINUATION` flag.
 
-## TTL de rutas
+## Route TTL
 
-| Tipo | TTL por defecto |
-|------|----------------|
-| Vecino directo | 90s |
+| Type | Default TTL |
+|------|-------------|
+| Direct neighbor | 90s |
 | 2–4 hops | 180s |
 | 5+ hops | 300s |
 
-Preset `MESH_MOBILE_MODE`: TTL 90s para todos + `RA_INTERVAL` = 15s.
+Preset `MESH_MOBILE_MODE`: TTL 90s for all + `RA_INTERVAL` = 15s.
 
-## Prevención de bucles — Seen-Frame Cache
+## Loop prevention — Seen-Frame Cache
 
 ```cpp
 struct SeenFrame {
@@ -53,62 +53,61 @@ struct SeenFrame {
     uint16_t seq;         // 2B
     uint32_t timestamp;   // 4B
 };
-// Buffer circular: 32 entradas × 12B = 384 bytes por nodo relay
+// Circular buffer: 32 entries × 12B = 384 bytes per relay node
 ```
 
-Un relay descarta el frame si `(srcMac, seq)` está en la caché (`SEEN_FRAME_TTL` = 10s). Si no, lo añade y lo reenvía.
+A relay discards the frame if `(srcMac, seq)` is in the cache (`SEEN_FRAME_TTL` = 10s). If not, it adds it and forwards the frame.
 
-## Mecanismos DVR estándar
+## Standard DVR mechanisms
 
-1. **Split Horizon:** No anunciar en RA hacia peer X las rutas con `nextHop == X`.
-2. **Poison Reverse:** Rutas aprendidas de X se anuncian a X con `hopCount = 255`.
-3. **TTL IP:** lwIP decrementa TTL; paquetes con TTL=0 descartados.
+1. **Split Horizon:** Do not advertise in RA toward peer X the routes with `nextHop == X`.
+2. **Poison Reverse:** Routes learned from X are advertised to X with `hopCount = 255`.
+3. **IP TTL:** lwIP decrements TTL; packets with TTL=0 are discarded.
 
 ## Route Withdraw
 
-### Timeout y detección de caída
+### Timeout and failure detection
 
-| Tipo de nodo | Timeout | Razón |
+| Node type | Timeout | Reason |
 |---|---|---|
-| Normal | 90s (`3 × RA_INTERVAL`) | 3 ROUTE_ADV perdidos |
-| Batería | `max(3 × sleepInterval + 60s, 120s)` | Puede estar dormido legítimamente |
+| Normal | 90s (`3 × RA_INTERVAL`) | 3 missing ROUTE_ADV |
+| Battery | `max(3 × sleepInterval + 60s, 120s)` | May be legitimately sleeping |
 
-El `sleepInterval` lo anuncia el propio nodo batería en el campo extra del `JOIN_BEACON` (bytes 6–9, `uint32_t` en segundos). Si el vecino no ha recibido ese campo, se aplica el mínimo de 120s.
+The `sleepInterval` is announced by the battery node itself in the extra field of the `JOIN_BEACON` (bytes 6–9, `uint32_t` seconds). If the neighbor has not received that field, the 120s minimum applies.
 
-### Comportamiento al expirar
+### Behavior on expiry
 
-Cuando `_checkPeerTimeouts()` detecta un peer expirado:
-1. Elimina rutas locales hacia/a través de ese peer (`handleRouteWithdraw(mac)`).
-2. Invoca el callback `onNodeLeave`.
-3. **Emite `ROUTE_WITHDRAW` broadcast** con payload = 6 bytes MAC del peer perdido.
+When `_checkPeerTimeouts()` detects an expired peer:
+1. Remove local routes to/through that peer (`handleRouteWithdraw(mac)`).
+2. Invoke `onNodeLeave` callback.
+3. **Emit `ROUTE_WITHDRAW` broadcast** with payload = 6-byte MAC of the lost peer.
 
-### Recepción de ROUTE_WITHDRAW
+### Receiving a ROUTE_WITHDRAW
 
-Al recibir un `ROUTE_WITHDRAW`:
-1. Si la MAC del payload coincide con la propia MAC → ignorar.
-2. Si no hay rutas hacia esa MAC → ignorar (ya convergió, no retransmitir).
-3. Si hay rutas → eliminarlas y disparar `onNodeLeave` si era peer directo.
+On receiving a `ROUTE_WITHDRAW`:
+1. If payload MAC equals own MAC → ignore.
+2. If there are no routes toward that MAC → ignore (already converged, do not retransmit).
+3. If routes exist → remove them and trigger `onNodeLeave` if it was a direct peer.
 
-> **Nota:** No se retransmite el `ROUTE_WITHDRAW` recibido. La difusión original alcanza
-> a todos los nodos en rango directo del emisor. Los nodos que solo lo conocen por rutas
-> multi-hop convergirán por expiración de ruta (máx. 90s adicionales).
+> **Note:** Do not retransmit received `ROUTE_WITHDRAW`. The original broadcast reaches
+> all nodes in direct range of the emitter. Nodes that only learned it via multi-hop will converge by route expiry (max. additional 90s).
 
-### JOIN_BEACON extendido para nodos batería
+### Extended JOIN_BEACON for battery nodes
 
 ```
-[channel: 1B][localIP: 4B][mode: 1B][sleepIntervalSec: 4B — solo si mode==MESH_BATTERY]
+[channel: 1B][localIP: 4B][mode: 1B][sleepIntervalSec: 4B — only if mode==MESH_BATTERY]
 ```
-Los vecinos leen este campo al recibir beacons y actualizan `PeerEntry.sleepIntervalMs`.
+Neighbors read this field on beacons and update `PeerEntry.sleepIntervalMs`.
 
-## Control de memoria
+## Memory control
 
-- Pool estático de `MAX_ROUTES` (default 64, `#define` en compilación).
-- Evicción cuando tabla llena: 1) entradas expiradas → 2) mayor hopCount → 3) menos recientemente actualizada.
+- Static pool of `MAX_ROUTES` (default 64, `#define` at compile time).
+- Eviction when table full: 1) expired entries → 2) highest hopCount → 3) least recently updated.
 
-## Criterio de aceptación
+## Acceptance criteria
 
-- Test: 3 nodos en línea A–B–C. A envía DATA a C. Verificar que B retransmite y C recibe (1 frame, no duplicados).
-- Test: 5 nodos, desconectar nodo central. Reconvergencia en < 60s (2 intervalos RA).
-- Test: Seen-Frame Cache descarta duplicados cuando B recibe el mismo frame por dos paths.
-- Test: frame con `hopCount = 255` no genera ruta en tabla.
-- Test: ROUTE_WITHDRAW elimina entradas correspondientes en todos los vecinos.
+- Test: 3 nodes in line A–B–C. A sends DATA to C. Verify B forwards and C receives (1 frame, no duplicates).
+- Test: 5 nodes, disconnect central node. Reconverge in < 60s (2 RA intervals).
+- Test: Seen-Frame Cache discards duplicates when B receives the same frame via two paths.
+- Test: frame with `hopCount = 255` does not create a route in the table.
+- Test: ROUTE_WITHDRAW removes corresponding entries on all neighbors.

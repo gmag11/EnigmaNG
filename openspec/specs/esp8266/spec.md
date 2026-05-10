@@ -1,33 +1,30 @@
-# Spec: Soporte ESP8266 — `src8266/MeshNode8266`
+# Spec: ESP8266 Support — `src8266/MeshNode8266`
 
-**Referencia:** §10 de EnigmaNG Specs v2.md
+**Reference:** §10 of EnigmaNG Specs v2.md
 
-> **Estructura:** El código ESP8266 vive en el mismo directorio `src/` del repositorio, usando guards
-> de preprocesador (`#ifdef ESP8266` / `#ifndef ESP8266`) para separar código por plataforma. Es el
-> enfoque estándar de librerías Arduino multi-plataforma y es compatible con el registro de PlatformIO
-> y Arduino Library Manager. Las constantes de protocolo compartidas están en `src/Protocol.h` sin guards.
+> **Structure:** ESP8266 code lives in the same `src/` directory of the repository, using preprocessor guards (`#ifdef ESP8266` / `#ifndef ESP8266`) to separate platform-specific code. This is the standard approach for multi-platform Arduino libraries and is compatible with PlatformIO registry and Arduino Library Manager. Shared protocol constants are in `src/Protocol.h` without guards.
 
-## Propósito
+## Purpose
 
-Permitir que nodos ESP8266 participen en la red EnigmaNG como publicadores/suscriptores MQTT, a través de un ESP32 relay que actúa como proxy.
+Allow ESP8266 nodes to participate in the EnigmaNG network as MQTT publishers/subscribers via an ESP32 relay acting as a proxy.
 
-## Limitaciones aceptadas
+## Accepted limitations
 
-- **Sin relay:** El ESP8266 no puede reenviar frames para otros nodos.
-- **Sin stack IP propio:** No implementa `netif` virtual (requeriría parchar Arduino Core ESP8266).
-- **Sin bridge:** No puede actuar como gateway.
-- **Solo proxy MQTT:** Cubre el 95% de casos de uso IoT reales.
+- **No relay:** ESP8266 cannot forward frames for other nodes.
+- **No native IP stack:** It does not implement a virtual `netif` (would require patching Arduino Core ESP8266).
+- **No bridge:** Cannot act as a gateway.
+- **Proxy-only MQTT:** Covers ~95% of real IoT use cases.
 
-## Arquitectura: Proxy MQTT
+## Architecture: MQTT proxy
 
 ```
-[ESP8266] ──ESP-NOW──▶ [ESP32 Proxy] ──TCP/MQTT──▶ [Broker MQTT]
+[ESP8266] ──ESP-NOW──▶ [ESP32 Proxy] ──TCP/MQTT──▶ [MQTT Broker]
            PROXY_MSG                 MQTT publish/subscribe
 ```
 
-El ESP32 proxy recibe frames `PROXY_MSG` del ESP8266 y los convierte a mensajes MQTT hacia el broker configurado en el gateway.
+The ESP32 proxy receives `PROXY_MSG` frames from the ESP8266 and converts them into MQTT messages toward the broker configured on the gateway.
 
-## Protocolo Proxy
+## Proxy protocol
 
 ```cpp
 enum ProxyMsgType : uint8_t {
@@ -36,28 +33,28 @@ enum ProxyMsgType : uint8_t {
     PROXY_SUBSCRIBE    = 0x03,
     PROXY_UNSUBSCRIBE  = 0x04,
     PROXY_MESSAGE      = 0x05,  // Broker → ESP8266
-    PROXY_PUBACK       = 0x06,  // QoS1 confirmación
+    PROXY_PUBACK       = 0x06,  // QoS1 acknowledgement
     PROXY_DISCONNECT   = 0x07,
-    PROXY_DISCOVERY    = 0x08,  // Broadcast: buscar proxy disponible
-    PROXY_OFFER        = 0x09   // Respuesta al discovery
+    PROXY_DISCOVERY    = 0x08,  // Broadcast: find available proxy
+    PROXY_OFFER        = 0x09   // Response to discovery
 };
 ```
 
-**Selección de proxy:**
-1. ESP8266 envía `PROXY_DISCOVERY` broadcast.
-2. ESP32 vecinos responden `PROXY_OFFER` con su MAC y RSSI.
-3. ESP8266 elige el de mejor RSSI y envía `PROXY_CONNECT`.
+**Proxy selection:**
+1. ESP8266 sends `PROXY_DISCOVERY` broadcast.
+2. Neighboring ESP32s reply with `PROXY_OFFER` including their MAC and RSSI.
+3. ESP8266 picks the best RSSI and sends `PROXY_CONNECT`.
 
-## Configuración del broker
+## Broker configuration
 
-- Dirección del broker: configurada en el gateway, distribuida en la respuesta de provisioning (§5.1) y en el `JOIN_BEACON`:
+- Broker address: configured on the gateway, distributed in the provisioning response (§5.1) and in the `JOIN_BEACON`:
   ```json
   { "broker": "192.168.1.100:1883", "broker_user": "", "broker_pass": "" }
   ```
-- ESP8266 almacena la dirección en EEPROM tras el primer provisioning.
-- Actualiza si recibe un `JOIN_BEACON` con dirección diferente.
+- ESP8266 stores the address in EEPROM after first provisioning.
+- It updates if it receives a `JOIN_BEACON` with a different address.
 
-## API pública para ESP8266
+## Public API for ESP8266
 
 ```cpp
 class MeshNode8266 {
@@ -75,14 +72,14 @@ public:
 };
 ```
 
-## Confirmación de entrega
+## Delivery confirmation
 
-- ESP-NOW confirma entrega peer-to-peer a nivel hardware (`OnDataSent`). Suficiente para el hop directo ESP8266↔ESP32 proxy.
-- Para QoS 1/2: el broker proporciona PUBACK. El proxy lo reenvía al ESP8266 via `PROXY_PUBACK`.
+- ESP-NOW provides peer-to-peer delivery confirmation at hardware level (`OnDataSent`). Sufficient for the direct hop ESP8266↔ESP32 proxy.
+- For QoS 1/2: the broker provides PUBACK. The proxy forwards it to the ESP8266 via `PROXY_PUBACK`.
 
-## Criterio de aceptación
+## Acceptance criteria
 
-- Test: ESP8266 hace `PROXY_DISCOVERY`, selecciona proxy ESP32, publica en topic. Verificar mensaje llega al broker MQTT.
-- Test: broker publica en topic suscrito por ESP8266. Verificar que `onMqttMessage` es llamado en el ESP8266.
-- Test: ESP8266 con PSK incorrecta no puede conectar (JOIN_BEACON tag inválido).
-- Test: cambio de broker en gateway. ESP8266 recibe nueva dirección en siguiente JOIN_BEACON y la aplica.
+- Test: ESP8266 performs `PROXY_DISCOVERY`, selects an ESP32 proxy, publishes to a topic. Verify the message reaches the MQTT broker.
+- Test: broker publishes to a topic subscribed by the ESP8266. Verify `onMqttMessage` is called on the ESP8266.
+- Test: ESP8266 with incorrect PSK cannot connect (invalid JOIN_BEACON tag).
+- Test: broker change on the gateway. ESP8266 receives new address in next JOIN_BEACON and applies it.

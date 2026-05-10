@@ -1,38 +1,38 @@
-# Spec: Criptografía y Gestión de Claves
+# Spec: Cryptography and Key Management
 
-**Referencia:** §4.2, §4.3, §4.4 de EnigmaNG Specs v2.md
+**Reference:** §4.2, §4.3, §4.4 of EnigmaNG Specs v2.md
 
-## Propósito
+## Purpose
 
-Proporcionar confidencialidad, autenticidad e integridad a todos los frames de la mesh mediante dos anillos de cifrado: Network Key (broadcast) y Link Key (unicast, por peer).
+Provide confidentiality, authenticity and integrity for all mesh frames using two encryption rings: Network Key (broadcast) and Link Key (unicast, per-peer).
 
-## Primitivas criptográficas
+## Cryptographic primitives
 
-| Primitiva | Algoritmo | Implementación |
+| Primitive | Algorithm | Implementation |
 |-----------|-----------|----------------|
 | ECDH | Curve25519 | mbedTLS (IDF built-in) |
 | KDF | HKDF-SHA256 (RFC 5869) | mbedTLS |
-| Cifrado unicast | AES-128-GCM | mbedTLS + HW aceleración ESP32 |
-| Cifrado broadcast | AES-128-GCM | Misma clave para todos los miembros |
-| CSPRNG | esp_random() | Hardware RNG del ESP32 |
+| Unicast encryption | AES-128-GCM | mbedTLS + ESP32 HW acceleration |
+| Broadcast encryption | AES-128-GCM | Same key for all members |
+| CSPRNG | esp_random() | ESP32 hardware RNG |
 
-## Clave de Red (Network Key)
+## Network Key
 
 ```
 NetworkKey = HKDF-SHA256(PSK, salt="enigmang-net-v1", info="broadcast", len=16)
 NetworkID  = HKDF-SHA256(PSK, salt="enigmang-net-v1", info="netid",     len=2)
 ```
 
-Todos los nodos con la misma PSK comparten NetworkKey y NetworkID. El NetworkID en el header permite descartar frames de otras redes sin descifrar.
+All nodes sharing the same PSK also share NetworkKey and NetworkID. The NetworkID in the header allows discarding frames from other networks without attempting decryption.
 
-## Handshake ECDH (Link Key) — Station-to-Station simplificado
+## ECDH Handshake (Link Key) — simplified Station-to-Station
 
 ```
-A → B:  KEY_EXCH_HELLO { pubA_efimera(32B), nonceA(32B) }
-B → A:  KEY_EXCH_REPLY  { pubB_efimera(32B), nonceB(32B) }
+A → B:  KEY_EXCH_HELLO { pubA_ephemeral(32B), nonceA(32B) }
+B → A:  KEY_EXCH_REPLY  { pubB_ephemeral(32B), nonceB(32B) }
 
-SharedSecret = X25519(privA_efimera, pubB_efimera)
-            = X25519(privB_efimera, pubA_efimera)
+SharedSecret = X25519(privA_ephemeral, pubB_ephemeral)
+            = X25519(privB_ephemeral, pubA_ephemeral)
 
 LinkKey = HKDF-SHA256(
             IKM  = SharedSecret,
@@ -45,21 +45,21 @@ A → B:  KEY_EXCH_CONFIRM { AES-GCM[LinkKey](challenge = nonceA XOR nonceB) }
 B → A:  KEY_EXCH_CONFIRM { AES-GCM[LinkKey](challenge = nonceB XOR nonceA) }
 ```
 
-**Propiedades:**
-- Autenticación PSK: salt incluye PSK; PSK incorrecta → LinkKey diferente → challenge falla.
-- Forward secrecy: pares efímeros destruidos tras handshake.
-- Anti-replay: nonceA y nonceB son 32B aleatorios del CSPRNG.
+**Properties:**
+- PSK authentication: salt includes PSK; incorrect PSK → different LinkKey → challenge fails.
+- Forward secrecy: ephemeral pairs destroyed after handshake.
+- Anti-replay: nonceA and nonceB are 32B random values from the CSPRNG.
 
-## Rotación de Clave — Epoch + Rechazo + Renegociación
+## Key rotation — Epoch + NACK + Renegotiation
 
-- Intervalo por defecto: 86.400s (24h). Configurable con `setKeyRotationInterval()`.
-- **Secuencia:**
-  1. Receptor detecta `epoch N+1` en frame de peer conocido con `epoch N`.
-  2. Envía `KEY_NACK { epoch_esperado: N+1 }`.
-  3. Buffer del frame rechazado (max 1 por peer).
-  4. Emisor recibe KEY_NACK → inicia KEY_EXCH_HELLO inmediato.
-  5. Tras KEY_EXCH_CONFIRM exitoso → retransmite el frame en buffer → purga buffer.
-- **Nodos batería:** comparan epoch en RTC memory con epoch del primer frame recibido al despertar.
+- Default interval: 86,400s (24h). Configurable via `setKeyRotationInterval()`.
+- **Sequence:**
+  1. Receiver detects `epoch N+1` in a frame from a known peer while it expects `epoch N`.
+  2. Sends `KEY_NACK { expected_epoch: N+1 }`.
+  3. Buffer the rejected frame (max 1 per peer).
+  4. Sender receives KEY_NACK → initiates KEY_EXCH_HELLO immediately.
+  5. After successful KEY_EXCH_CONFIRM → retransmit buffered frame → purge buffer.
+- **Battery nodes:** compare epoch in RTC memory with epoch of the first frame received on wake.
 
 ## PeerManager
 
@@ -79,19 +79,19 @@ struct PeerEntry {
 // sizeof(PeerEntry) ≈ 36 bytes
 ```
 
-- **Almacenamiento:** Hash table de direccionamiento abierto. Tamaño inicial: 16 slots.
-- **Evicción LRU:** Si `heap_free < PEER_HEAP_LOW_WATERMARK` (20KB), evictar peer con `lastSeen` más antiguo y `routeCount == 0`.
-- **Cleanup periódico:** Cada 60s, eliminar peers con `lastSeen > PEER_TIMEOUT` (3600s).
-- **Anti-replay:** Rechazar frame con `seq ≤ lastSeqRx` del mismo peer. Sequence se reinicia en cada renegociación.
+- **Storage:** Open-addressing hash table. Initial size: 16 slots.
+- **LRU eviction:** If `heap_free < PEER_HEAP_LOW_WATERMARK` (20KB), evict the peer with oldest `lastSeen` and `routeCount == 0`.
+- **Periodic cleanup:** Every 60s, remove peers with `lastSeen > PEER_TIMEOUT` (3600s).
+- **Anti-replay:** Reject frame with `seq ≤ lastSeqRx` from the same peer. Sequence resets on each renegotiation.
 
-## Almacenamiento de claves
+## Key storage
 
-- ESP32: NVS (wear leveling nativo). Clave: `"enigmang/peer/<mac_hex>"`.
-- ESP8266: EEPROM (estructura compacta, offset fijo por slot).
+- ESP32: NVS (native wear-leveling). Key: `"enigmang/peer/<mac_hex>"`.
+- ESP8266: EEPROM (compact structure, fixed slot offset).
 
-## Criterio de aceptación
+## Acceptance criteria
 
-- Test: 2 nodos negocian LinkKey. Tercer nodo con PSK incorrecta no puede descifrar.
-- Test: forzar rotación de epoch. Verificar KEY_NACK + renegociación + retransmisión en < 500ms.
-- Test: frame con `seq ≤ lastSeqRx` es descartado silenciosamente.
-- Test: evicción LRU cuando heap < 20KB.
+- Test: 2 nodes negotiate LinkKey. Third node with incorrect PSK cannot decrypt.
+- Test: force epoch rotation. Verify KEY_NACK + renegotiation + retransmission within < 500ms.
+- Test: frame with `seq ≤ lastSeqRx` is silently discarded.
+- Test: LRU eviction when heap < 20KB.

@@ -1,28 +1,28 @@
-# Spec: API Pública de la Librería
+# Spec: Library Public API
 
-**Referencia:** §14 de EnigmaNG Specs v2.md
+**Reference:** §14 of EnigmaNG Specs v2.md
 
-## Propósito
+## Purpose
 
-Exponer la funcionalidad completa de EnigmaNG a través de una API C++ limpia, compatible con el ecosistema Arduino (PubSubClient, HTTPClient, etc.) y neutral para el usuario final.
+Expose the full EnigmaNG functionality through a clean C++ API, compatible with the Arduino ecosystem (PubSubClient, HTTPClient, etc.) and transparent to end users.
 
-## Clase principal: `MeshNetwork`
+## Main class: `MeshNetwork`
 
 ```cpp
 class MeshNetwork {
 public:
-    // Inicialización
+    // Initialization
     bool begin(const char* psk, MeshMode mode = MESH_NODE);
     bool begin(const char* psk, IPAddress staticIP, MeshMode mode = MESH_NODE);
 
-    // Configuración
+    // Configuration
     void setRelayEnabled(bool enabled);
     void setBatteryMode(bool enabled, uint32_t sleepIntervalSec);
     void setRssiThreshold(int8_t connectDbm, int8_t disconnectDbm);
     void setKeyRotationInterval(uint32_t seconds);
     void setMaxRoutes(uint16_t max);
 
-    // Estado
+    // Status
     bool      isConnected();
     bool      isGateway();
     int       getNodeCount();
@@ -30,9 +30,9 @@ public:
     int8_t    getRssiFromGateway();
     IPAddress getLocalIP();
 
-    // Integración IP transparente
-    // Devuelve un Client compatible con PubSubClient, HTTPClient, etc.
-    // El stack lwIP gestiona el routing sobre la mesh automáticamente.
+    // Transparent IP integration
+    // Returns a Client compatible with PubSubClient, HTTPClient, etc.
+    // The lwIP stack handles routing over the mesh automatically.
     WiFiClient& getClient();
 
     // Callbacks
@@ -45,7 +45,7 @@ public:
     void setMqttBroker(const char* host, uint16_t port);
     bool setStaticIPTable(const std::vector<std::pair<String, IPAddress>>& table);
 
-    // Sincronización de tiempo
+    // Time synchronization
     time_t getMeshTime();
     void   onTimeSync(MeshTimeCallback cb);
 
@@ -55,46 +55,46 @@ public:
 };
 
 enum MeshMode : uint8_t {
-    MESH_NODE    = 0,   // Nodo estándar con relay habilitado
-    MESH_GATEWAY = 1,   // Con WiFi uplink + AP provisioning
-    MESH_BATTERY = 2    // Sin relay, deep sleep cíclico
+    MESH_NODE    = 0,   // Standard node with relay enabled
+    MESH_GATEWAY = 1,   // With WiFi uplink + AP provisioning
+    MESH_BATTERY = 2    // No relay, cyclic deep sleep
 };
 ```
 
-## Principio de integración IP transparente
+## Principle of transparent IP integration
 
-`getClient()` devuelve un `WiFiClient` wrapeado sobre un socket lwIP en el netif `mesh0`. Esto permite:
+`getClient()` returns a wrapped `WiFiClient` around an lwIP socket on netif `mesh0`. This allows:
 
 ```cpp
 MeshNetwork mesh;
 WiFiClient& client = mesh.getClient();
-PubSubClient mqttClient(client);  // Funciona sin modificaciones
+PubSubClient mqttClient(client);  // Works without changes
 HTTPClient http;
-http.begin(client, "http://10.200.0.1/api"); // Funciona sin modificaciones
+http.begin(client, "http://10.200.0.1/api"); // Works without changes
 ```
 
-lwIP gestiona el routing automáticamente: destinos en `10.200.0.0/16` van por `mesh0`, el resto por `wifi_sta` (en gateways).
+lwIP handles routing automatically: destinations in `10.200.0.0/16` go via `mesh0`, the rest via `wifi_sta` (on gateways).
 
-## Estructura de directorios del repositorio
+## Repository directory structure
 
 ```
 EnigmaNG/
-  src/                       ← Código principal (compatible IDF + Arduino)
-    MeshNetwork.h/.cpp        ← API pública
-    PhysicalLayer.h/.cpp      ← Wrapper QuickESPNow
-    LinkLayer.h/.cpp          ← Serialización de frames
+  src/                       ← Main code (IDF + Arduino compatible)
+    MeshNetwork.h/.cpp        ← Public API
+    PhysicalLayer.h/.cpp      ← QuickESPNow wrapper
+    LinkLayer.h/.cpp          ← Frame serialization
     Crypto.h/.cpp             ← ECDH + AES-GCM + HKDF
-    PeerManager.h/.cpp        ← Hash table de peers
+    PeerManager.h/.cpp        ← Peer hash table
     Router.h/.cpp             ← DVR + RouteTable + SeenFrameCache
     NetifDriver.h/.cpp        ← esp_netif virtual mesh0
-    Onboarding.h/.cpp         ← AP provisioning + canal discovery
-    BatteryNode.h/.cpp        ← Ciclo LoRaWAN-A + Parent buffer
-    Gateway.h/.cpp            ← WiFi uplink + routing LAN+NAT
+    Onboarding.h/.cpp         ← AP provisioning + channel discovery
+    BatteryNode.h/.cpp        ← LoRaWAN-A cycle + Parent buffer
+    Gateway.h/.cpp            ← WiFi uplink + LAN+NAT routing
     WebUI.h/.cpp              ← esp_http_server + Digest Auth
-    ServiceDiscovery.h/.cpp   ← Protocolo propio + mDNS bridge
-  arduino/                   ← Wrapper Arduino específico
-    MeshNetwork.h             ← Hereda/wrappea src/MeshNetwork
-  idf_component/             ← Para proyectos IDF nativos
+    ServiceDiscovery.h/.cpp   ← Custom protocol + mDNS bridge
+  arduino/                   ← Arduino-specific wrapper
+    MeshNetwork.h             ← Inherits/wraps src/MeshNetwork
+  idf_component/             ← For native IDF projects
     CMakeLists.txt
     idf_component.yml
   examples/
@@ -103,15 +103,15 @@ EnigmaNG/
       GatewaySingleChip/
       BatteryNode/
     idf/
-      gateway_hosted/         ← Gateway dual-board (IDF only)
-  test/                      ← Tests unitarios (Unity framework)
-  library.json               ← Metadatos Arduino Library Manager
+      gateway_hosted/         ← Dual-board gateway (IDF only)
+  test/                      ← Unit tests (Unity framework)
+  library.json               ← Arduino Library Manager metadata
 ```
 
-## Criterio de aceptación
+## Acceptance criteria
 
-- Test: `PubSubClient` con `getClient()` conecta a broker MQTT en la LAN a través de la mesh. Publica y recibe mensajes.
-- Test: `HTTPClient` hace GET a servidor HTTP en la LAN a través del gateway.
-- Test: `begin()` con PSK incorrecta no conecta a la mesh.
-- Test: `onNodeJoin` callback llamado cuando un nuevo nodo se une.
-- Test: `loop()` debe llamarse regularmente; verificar que sin `loop()` la mesh no recibe frames.
+- Test: `PubSubClient` with `getClient()` connects to an MQTT broker on the LAN via the mesh. Publishes and receives messages.
+- Test: `HTTPClient` performs a GET to an HTTP server on the LAN via the gateway.
+- Test: `begin()` with incorrect PSK does not connect to the mesh.
+- Test: `onNodeJoin` callback is invoked when a new node joins.
+- Test: `loop()` must be called regularly; verify that without `loop()` the mesh does not receive frames.

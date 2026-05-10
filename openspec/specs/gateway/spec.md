@@ -1,52 +1,52 @@
 # Spec: Gateway WiFi
 
-**Referencia:** §9 de EnigmaNG Specs v2.md
+**Reference:** §9 of EnigmaNG Specs v2.md
 
-## Propósito
+## Purpose
 
-Conectar la red mesh ESP-NOW a la red WiFi/Internet, proporcionando routing bidireccional LAN↔mesh, NAT para Internet, AP de onboarding, Web UI y métricas Prometheus.
+Connect the ESP-NOW mesh network to WiFi/Internet, providing bidirectional LAN↔mesh routing, NAT for Internet, onboarding AP, Web UI and Prometheus metrics.
 
-## Funciones del gateway
+## Gateway features
 
-- WiFi STA (conexión al AP externo) + ESP-NOW mesh simultáneos.
-- AP de onboarding permanente (segunda MAC del ESP32 en modo AP+STA).
-- Servidor DHCP para nodos mesh que no usen IP estática.
-- Servidor web: dashboard + API JSON + Prometheus.
-- Puede haber múltiples gateways por redundancia.
+- WiFi STA (connection to external AP) + ESP-NOW mesh simultaneously.
+- Permanent onboarding AP (second MAC of the ESP32 in AP+STA mode).
+- DHCP server for mesh nodes that don't use a static IP.
+- Web server: dashboard + JSON API + Prometheus.
+- Multiple gateways can exist for redundancy.
 
-## Routing: NAT completo (masquerade)
+## Routing: full NAT (masquerade)
 
-Todo el tráfico saliente de la mesh hacia la red WiFi o Internet pasa por NAT masquerade usando la IP WiFi del gateway. **No se requieren rutas estáticas en el router WiFi del usuario.**
+All outbound traffic from the mesh toward the WiFi network or Internet is NAT masqueraded using the gateway's WiFi IP. **No static routes are required on the user's WiFi router.**
 
 ```
-Tráfico mesh → LAN WiFi (10.200.x.x → 192.168.1.x):
-    NAT masquerade. Los nodos mesh se ven como la IP del gateway
-    desde el punto de vista de la LAN. Conexiones outbound funcionan
-    de forma transparente (MQTT, HTTP, CoAP, etc.).
+Mesh traffic → WiFi LAN (10.200.x.x → 192.168.1.x):
+    NAT masquerade. Mesh nodes appear as the gateway's IP
+    from the LAN perspective. Outbound connections work
+    transparently (MQTT, HTTP, CoAP, etc.).
 
-Tráfico mesh → Internet (10.200.x.x → 0.0.0.0/0):
-    NAT masquerade. Idéntico al caso LAN.
+Mesh traffic → Internet (10.200.x.x → 0.0.0.0/0):
+    NAT masquerade. Identical to the LAN case.
 ```
 
-- `ip_napt` habilitado en `mesh0` (lwIP NAPT, IDF 5.5.4).
-- Todo tráfico saliente desde `mesh0` → `wifi_sta` es masquerado con la IP WiFi.
-- **Sin rutas estáticas** en el router WiFi: cero configuración de red requerida al usuario.
-- **Trade-off aceptado:** la LAN no puede iniciar conexiones hacia nodos mesh (no hay inbound NAT). Esto es correcto para el caso de uso habitual (nodos publican a broker MQTT / servidor HTTP en LAN o Internet).
-- Si se necesita acceso inbound (ej. Web UI del gateway), el propio gateway tiene IP WiFi directa y no pasa por NAT.
+- `ip_napt` enabled on `mesh0` (lwIP NAPT, IDF 5.5.4).
+- All outbound traffic from `mesh0` → `wifi_sta` is masqueraded with the WiFi IP.
+- **No static routes** on the WiFi router: zero network configuration required from the user.
+- **Trade-off accepted:** the LAN cannot initiate connections toward mesh nodes (no inbound NAT). This fits the common use case (nodes publish to an MQTT broker / HTTP server on LAN or Internet).
+- If inbound access is needed (e.g., the gateway's Web UI), the gateway itself has a direct WiFi IP and is not behind NAT.
 
-## Selección de gateway (routing multi-gateway)
+## Gateway selection (multi-gateway routing)
 
-Los gateways anuncian flag `IS_GATEWAY` y métrica en `ROUTE_ADV`:
+Gateways announce `IS_GATEWAY` flag and a metric in `ROUTE_ADV`:
 
 ```
 Metric = hopCount × 100 + (100 + wifi_rssi)
 ```
 
-Los nodos eligen el gateway con menor métrica. Desempate: menor `hopCount`, luego mejor RSSI al nextHop.
+Nodes choose the gateway with the lowest metric. Tie-break: lower `hopCount`, then better RSSI to nextHop.
 
-Redundancia: si un gateway desaparece, sus rutas expiran y los nodos migran automáticamente. Las conexiones TCP activas se rompen (diferente IP NAT). Aceptable para v1.0.
+Redundancy: if a gateway disappears, its routes expire and nodes migrate automatically. Active TCP connections break (different NAT IP). Acceptable for v1.0.
 
-## Abstracción MeshUplink (para dual-board)
+## MeshUplink abstraction (for dual-board)
 
 ```cpp
 class MeshUplink {
@@ -57,31 +57,31 @@ public:
     virtual bool isConnected() = 0;
 };
 
-class NativeWifiUplink : public MeshUplink { /* esp_wifi nativo */ };
+class NativeWifiUplink : public MeshUplink { /* native esp_wifi */ };
 class HostedWifiUplink : public MeshUplink { /* esp_hosted, IDF only */ };
 ```
 
-`ENIGMANG_HOSTED_UPLINK` define en compilación qué implementación se usa. La lógica de gateway es idéntica en ambos casos.
+`ENIGMANG_HOSTED_UPLINK` compile-time define selects which implementation is used. Gateway logic is identical in both cases.
 
-## Web UI y autenticación
+## Web UI and authentication
 
-- **Servidor:** `esp_http_server` (IDF nativo). Descartada AsyncWebServer.
-- **Autenticación:** HTTP Digest Auth (RFC 7616). Nativo en `esp_http_server` IDF 5.x.
-- El endpoint `/metrics` puede no requerir auth (Prometheus accede desde red interna).
+- **Server:** `esp_http_server` (native IDF). AsyncWebServer discarded.
+- **Authentication:** HTTP Digest Auth (RFC 7616). Native in `esp_http_server` IDF 5.x.
+- `/metrics` endpoint may not require auth (Prometheus scrapes from internal network).
 
 **Endpoints:**
 
-| Método | Path | Descripción |
+| Method | Path | Description |
 |--------|------|-------------|
-| GET | `/` | Dashboard HTML (topología, nodos, rutas) |
-| GET | `/api/v1/status` | JSON: estado general |
-| GET | `/api/v1/nodes` | JSON: lista de nodos |
-| GET | `/api/v1/routes` | JSON: tabla de rutas |
-| GET | `/api/v1/peers` | JSON: tabla de peers y RSSI |
+| GET | `/` | Dashboard HTML (topology, nodes, routes) |
+| GET | `/api/v1/status` | JSON: overall status |
+| GET | `/api/v1/nodes` | JSON: node list |
+| GET | `/api/v1/routes` | JSON: routing table |
+| GET | `/api/v1/peers` | JSON: peers table and RSSI |
 | GET | `/metrics` | Prometheus text format |
-| POST | `/api/v1/config` | Cambio de configuración (requiere auth) |
+| POST | `/api/v1/config` | Change configuration (requires auth) |
 
-## Métricas Prometheus
+## Prometheus metrics
 
 ```
 mesh_nodes_total{network="XXXX"} 15
@@ -95,14 +95,14 @@ mesh_heap_free{node="AABBCCDDEEFF"} 45312
 mesh_route_convergence_ms{network="XXXX"} 250
 ```
 
-## Gateway dual-board (ESP-Hosted) — ⚠️ IDF nativo obligatorio
+## Dual-board gateway (ESP-Hosted) — ⚠️ native IDF required
 
-Ver §9.5 del spec principal. Requiere proyecto CMake nativo de ESP-IDF. No compatible con Arduino Core. Se implementa como ejemplo separado en `examples/idf/gateway_hosted/`.
+See §9.5 of the main spec. Requires native ESP-IDF CMake project. Not compatible with Arduino Core. Implemented as a separate example in `examples/idf/gateway_hosted/`.
 
-## Criterio de aceptación
+## Acceptance criteria
 
-- Test: nodo mesh hace HTTP request a `http://example.com` (verifica NAT Internet).
-- Test: dispositivo WiFi hace `ping 10.200.0.5` (nodo mesh) a través del gateway (verifica routing LAN).
-- Test: Web UI accesible en `http://<gateway_ip>/`. Digest Auth rechaza credenciales incorrectas.
-- Test: `/metrics` devuelve texto Prometheus válido.
-- Test: gateway primario desaparece. Nodos migran al secundario en < 60s.
+- Test: a mesh node makes an HTTP request to `http://example.com` (verifies Internet NAT).
+- Test: a WiFi device can `ping 10.200.0.5` (mesh node) through the gateway (verifies LAN routing).
+- Test: Web UI accessible at `http://<gateway_ip>/`. Digest Auth rejects wrong credentials.
+- Test: `/metrics` returns valid Prometheus text.
+- Test: primary gateway disappears. Nodes migrate to secondary in < 60s.

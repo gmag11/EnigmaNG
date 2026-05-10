@@ -1,28 +1,28 @@
-# Tareas: mesh-dhcp — Servidor DHCP en Gateway
+# Tasks: mesh-dhcp — DHCP Server on Gateway
 
-## Progreso: 0/3 tareas completadas
-
----
-
-## Fase 1: Mock y tipos
-
-**Spec:** `openspec/specs/ip-netif/spec.md` §Asignación de IPs
-
-- [ ] Actualizar `test/mocks/dhcpserver/dhcpserver.h` con los tipos y stubs reales de la API lwIP dhcpserver
-  - _Test: `pio test -e native` compila sin errores tras el cambio_
+## Progress: 0/3 tasks completed
 
 ---
 
-## Fase 2: Implementación
+## Phase 1: Mock and types
 
-**Spec:** `openspec/specs/ip-netif/spec.md` §Asignación de IPs
+**Spec:** `openspec/specs/ip-netif/spec.md` §IP assignment
 
-- [ ] Implementar `Gateway::startDHCPServer(poolStart, poolEnd)` usando `dhcps_new()` / `dhcps_start()` sobre el netif `mesh0`; añadir `dhcps_handle_t _dhcpsHandle` en `Gateway.h`; invocar en `Gateway::begin()` y limpiar en `Gateway::stop()`
-  - _Test: `pio run -e esp32` compila sin warnings; en hardware: nodo sin IP estática obtiene IP del gateway por DHCP en < 5s_
+- [ ] Update `test/mocks/dhcpserver/dhcpserver.h` with real types and no-op stubs for the lwIP dhcpserver API
+  - _Test: `pio test -e native` compiles without errors after the change_
 
 ---
 
-## Fase 3: Integración en API pública
+## Phase 2: Implementation
 
-- [ ] Verificar que `GatewaySingleChip` y `gateway_hosted` ejemplos arrancan el DHCP server correctamente; documentar el comportamiento en los comentarios de `MeshNetwork.h`
-  - _Test: ambos ejemplos compilan; comentario `// DHCP: nodos sin IP estática reciben IP del pool` visible en API_
+**Spec:** `openspec/specs/ip-netif/spec.md` §IP assignment
+
+- [ ] Implement `Gateway::startDHCPServer(poolStart, poolEnd)` using `dhcps_new()` / `dhcps_start()` on the `mesh0` netif; add `dhcps_handle_t _dhcpsHandle` in `Gateway.h`; invoke in `Gateway::begin()` and clean up in `Gateway::stop()`
+  - _Test: `pio run -e esp32` compiles without warnings; on hardware: node without static IP obtains gateway DHCP IP in < 5s_
+
+---
+
+## Phase 3: Public API integration
+
+- [ ] Verify that `GatewaySingleChip` and `gateway_hosted` examples start the DHCP server correctly; document behavior in comments of `MeshNetwork.h`
+  - _Test: both examples compile; comment `// DHCP: nodes without static IP receive pool IP` visible in API_

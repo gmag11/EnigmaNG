@@ -1,30 +1,30 @@
-# Spec: Capa IP — netif Virtual, MTU, ARP, DHCP, ICMP
+# Spec: IP Layer — Virtual netif, MTU, ARP, DHCP, ICMP
 
-**Referencia:** §8 de EnigmaNG Specs v2.md
+**Reference:** §8 of EnigmaNG Specs v2.md
 
-## Propósito
+## Purpose
 
-Exponer la mesh ESP-NOW como interfaz de red IP estándar (`mesh0`) mediante un netif virtual lwIP, permitiendo que cualquier aplicación TCP/UDP funcione sobre la mesh sin modificaciones.
+Expose the ESP-NOW mesh as a standard IP network interface (`mesh0`) via a virtual lwIP netif, allowing any TCP/UDP application to run over the mesh without modification.
 
-## Interfaz virtual `mesh0`
+## Virtual interface `mesh0`
 
-- Creada con `esp_netif_new()` y driver personalizado (`ESP_NETIF_ID_CUSTOM`).
-- **Path de entrada (RX):** Frame `DATA` descifrado → `esp_netif_receive()` → lwIP.
-- **Path de salida (TX):** `mesh_netif_output()` → buscar ruta → cifrar → `sendUnicast/Broadcast()`.
+- Created with `esp_netif_new()` and a custom driver (`ESP_NETIF_ID_CUSTOM`).
+- **RX path:** `DATA` frame decrypted → `esp_netif_receive()` → lwIP.
+- **TX path:** `mesh_netif_output()` → lookup route → encrypt → `sendUnicast/Broadcast()`.
 
-## MTU y configuración TCP
+## MTU and TCP configuration
 
 ```
 ESP-NOW payload:   250 bytes
-Header L2:          22 bytes
-Tag GCM:            12 bytes
+L2 header:         22 bytes
+GCM tag:           12 bytes
 ──────────────────────────────
 MTU (mesh0):       216 bytes
 TCP MSS:           176 bytes  (216 - 20 IP - 20 TCP)
 UDP max payload:   188 bytes  (216 - 20 IP - 8 UDP)
 ```
 
-**`lwipopts.h` recomendado:**
+**Recommended `lwipopts.h`:**
 
 ```c
 #define TCP_MSS              176
@@ -33,63 +33,63 @@ UDP max payload:   188 bytes  (216 - 20 IP - 8 UDP)
 #define LWIP_TCP_SACK_OUT    0
 ```
 
-## Fragmentación L2
+## L2 fragmentation
 
-Para payloads IP > 216B (excepcional — TCP MSS los previene para TCP):
+For IP payloads > 216B (rare — TCP MSS prevents it for TCP):
 
 ```
 [FragID: 2B][FragOffset: 1B][FragFlags: 1B] = 4 bytes overhead
 ```
 
-- Timeout reensamblaje: 2s.
-- Máximo 4 fragmentos por paquete.
+- Reassembly timeout: 2s.
+- Maximum 4 fragments per packet.
 
-## Asignación de IPs
+## IP assignment
 
-| Modo | Escenario | Mecanismo |
-|------|-----------|-----------|
-| Estático distribuido (default) | Nodos batería, instalaciones fijas | MAC→IP en NVS; tabla distribuida via ROUTE_ADV |
-| DHCP | Nodos conectados con IP dinámica | Servidor DHCP en gateway (lwIP dhcpserver) |
-| IP fija manual | Configuración explícita | `begin(psk, IPAddress(...))` |
+| Mode | Scenario | Mechanism |
+|------|----------|-----------|
+| Distributed static (default) | Battery nodes, fixed installations | MAC→IP in NVS; distributed table via ROUTE_ADV |
+| DHCP | Nodes with dynamic IP | DHCP server on gateway (lwIP dhcpserver) |
+| Manual static IP | Explicit configuration | `begin(psk, IPAddress(...))` |
 
-**Subred:** `10.200.0.0/16` (configurable). Gateway: primera IP asignable.
+**Subnet:** `10.200.0.0/16` (configurable). Gateway: first assignable IP.
 
 ## ARP
 
-- Tabla de routing unificada (§6) resuelve IP→MAC localmente → sin tráfico ARP para destinos conocidos.
-- `ARP_QUERY` broadcast solo si IP no está en tabla.
-- `ARP_REPLY` gratuitous enviado en cada join (anuncia IP→MAC al llegar a la mesh).
+- The unified routing table (§6) resolves IP→MAC locally → no ARP traffic for known destinations.
+- `ARP_QUERY` broadcast only if IP not in table.
+- Gratuitous `ARP_REPLY` is sent on each join (announces IP→MAC when joining the mesh).
 
 ## ICMP (Ping)
 
-ICMP es completamente transparente — **no requiere ningún cambio en la capa mesh.**
+ICMP is fully transparent — **no changes required at the mesh layer.**
 
-- ICMP es IPv4 protocolo 1 → viaja como `PROTO_IPV4 (0x01)` en el header mesh.
-- lwIP responde automáticamente a echo requests en cualquier netif registrado (incluyendo `mesh0`).
-- Los relays reenvían el frame DATA como cualquier otro; no tienen visibilidad del protocolo IP interior.
+- ICMP is IPv4 protocol 1 → travels as `PROTO_IPV4 (0x01)` in the mesh header.
+- lwIP replies automatically to echo requests on any registered netif (including `mesh0`).
+- Relays forward the DATA frame like any other; they don’t inspect inner IP protocol.
 
-**Tamaño típico de ping:**
+**Typical ping size:**
 
 ```
-ICMP echo request: 20B IP + 8B ICMP + 32B datos = 60B payload
+ICMP echo request: 20B IP + 8B ICMP + 32B data = 60B payload
 Frame total:       22B header + 60B payload + 12B tag = 94 bytes
 ```
 
-**API `esp_ping` funciona sin configuración adicional:**
+**`esp_ping` API works without extra configuration:**
 
 ```c
 esp_ping_config_t config = ESP_PING_DEFAULT_CONFIG();
 config.target_addr.u_addr.ip4.addr = ipaddr_addr("10.200.0.5");
 config.target_addr.type = IPADDR_TYPE_V4;
-// lwIP selecciona mesh0 automáticamente para IPs 10.200.0.0/16
+// lwIP selects mesh0 automatically for 10.200.0.0/16
 esp_ping_new_session(&config, &cbs, &ping);
 esp_ping_start(ping);
 ```
 
-## Criterio de aceptación
+## Acceptance criteria
 
-- Test: `ping` entre dos nodos con IPs estáticas. RTT medido.
-- Test: UDP de 200 bytes (requiere fragmentación L2). Reensamblaje correcto en destino.
-- Test: TCP MQTT QoS 0 publish funcional entre nodo y broker en LAN.
-- Test: `ping 8.8.8.8` desde nodo mesh a través del gateway (mesh → gateway → NAT → Internet).
-- Test: TCP MQTT publish desde nodo mesh a broker en LAN (mesh → gateway → NAT → LAN). El broker ve la IP WiFi del gateway como origen.
+- Test: `ping` between two nodes with static IPs. Measure RTT.
+- Test: UDP 200 bytes (requires L2 fragmentation). Reassembly correct at destination.
+- Test: TCP MQTT QoS 0 publish functional between node and broker on LAN.
+- Test: `ping 8.8.8.8` from mesh node via gateway (mesh → gateway → NAT → Internet).
+- Test: TCP MQTT publish from mesh node to LAN broker (mesh → gateway → NAT → LAN). Broker sees gateway WiFi IP as source.

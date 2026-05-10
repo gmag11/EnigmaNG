@@ -1,19 +1,19 @@
-# Diseño: Servidor DHCP en Gateway (mesh-dhcp)
+# Design: DHCP Server on Gateway (mesh-dhcp)
 
-**Referencia:** `openspec/specs/ip-netif/spec.md` §Asignación de IPs
+**Reference:** `openspec/specs/ip-netif/spec.md` §IP assignment
 
-## Contexto actual
+## Current context
 
-`Gateway::startDHCPServer(poolStart, poolEnd)` en `src/Gateway.cpp` es un stub: solo asigna `_dhcpRunning = true` y retorna `true`. No llama a ninguna API lwIP real.
+`Gateway::startDHCPServer(poolStart, poolEnd)` in `src/Gateway.cpp` is a stub: it only sets `_dhcpRunning = true` and returns `true`. It does not call any real lwIP API.
 
-## Decisión de implementación
+## Implementation decision
 
-### API lwIP dhcpserver (ESP-IDF 5.x)
+### lwIP dhcpserver API (ESP-IDF 5.x)
 
-Arduino Core ESP32 3.3.8 expone la cabecera `dhcpserver/dhcpserver.h` con:
+Arduino Core ESP32 3.3.8 exposes the header `dhcpserver/dhcpserver.h` with:
 
 ```c
-// Tipos relevantes
+// Relevant types
 typedef struct dhcps_s* dhcps_handle_t;
 
 typedef struct {
@@ -21,7 +21,7 @@ typedef struct {
     ip4_addr_t end;
 } dhcps_lease_t;
 
-// Funciones clave
+// Key functions
 dhcps_handle_t dhcps_new(tcpip_adapter_ip_info_t* ip_info);
 esp_err_t dhcps_start(dhcps_handle_t dhcps, struct netif* netif, ip4_addr_t ip);
 esp_err_t dhcps_stop(dhcps_handle_t dhcps, struct netif* netif);
@@ -29,40 +29,40 @@ esp_err_t dhcps_set_option_info(dhcps_handle_t dhcps, uint8_t op_id, void* opt_i
 void dhcps_delete(dhcps_handle_t dhcps);
 ```
 
-### Integración con `mesh0`
+### Integration with `mesh0`
 
-El servidor DHCP debe arrancar **sobre el netif `mesh0`** (no sobre `wifi_sta`), de forma que los nodos mesh reciban IPs del pool cuando no tienen asignación estática.
+The DHCP server must run **on the `mesh0` netif** (not on `wifi_sta`), so mesh nodes obtain IPs from the pool when they have no static assignment.
 
-Flujo en `Gateway::startDHCPServer()`:
+Flow in `Gateway::startDHCPServer()`:
 
-1. Obtener el `netif*` de lwIP asociado a `mesh0` via `esp_netif_get_netif_impl()`.
-2. Construir `tcpip_adapter_ip_info_t` con la IP del gateway (`10.200.0.1`) y máscara (`255.255.0.0`).
-3. Crear instancia con `dhcps_new()`.
-4. Configurar el pool de leases con `dhcps_set_option_info(DHCPS_OP_LEASE_POOL, ...)`.
-5. Arrancar con `dhcps_start()` pasando el `netif` de `mesh0`.
-6. Guardar el handle en `_dhcpsHandle` para poder parar el servidor (`stop()`).
+1. Obtain the `netif*` for `mesh0` via `esp_netif_get_netif_impl()`.
+2. Build `tcpip_adapter_ip_info_t` with the gateway IP (`10.200.0.1`) and mask (`255.255.0.0`).
+3. Create instance with `dhcps_new()`.
+4. Configure the lease pool with `dhcps_set_option_info(DHCPS_OP_LEASE_POOL, ...)`.
+5. Start with `dhcps_start()` passing the `mesh0` `netif`.
+6. Save the handle in `_dhcpsHandle` to stop the server later (`stop()`).
 
-### Pool de direcciones por defecto
+### Default address pool
 
-- Gateway: `10.200.0.1` (ya configurado en `mesh0`).
+- Gateway: `10.200.0.1` (already configured on `mesh0`).
 - Pool: `10.200.0.2` – `10.200.0.254`.
-- Lease time: 24 horas (valor por defecto de lwIP dhcpserver).
+- Lease time: 24 hours (default lwIP dhcpserver value).
 
-### Ciclo de vida
+### Lifecycle
 
-| Evento | Acción |
+| Event | Action |
 |--------|--------|
-| `Gateway::begin()` | Llama a `startDHCPServer(10.200.0.2, 10.200.0.254)` automáticamente tras `enableNAT()` |
-| `Gateway::stop()` | Llama a `dhcps_stop()` + `dhcps_delete()` si `_dhcpsRunning` |
+| `Gateway::begin()` | Calls `startDHCPServer(10.200.0.2, 10.200.0.254)` automatically after `enableNAT()` |
+| `Gateway::stop()` | Calls `dhcps_stop()` + `dhcps_delete()` if `_dhcpsRunning` |
 
-### Mock para tests unitarios
+### Mock for unit tests
 
-El stub en `test/mocks/dhcpserver/dhcpserver.h` debe declarar los tipos y funciones con implementaciones vacías/no-op para que los tests que incluyen `Gateway.h` compilen sin errores.
+The stub in `test/mocks/dhcpserver/dhcpserver.h` should declare the types and functions with empty/no-op implementations so tests that include `Gateway.h` compile without errors.
 
-## Cambios de archivos previstos
+## Files to change
 
-| Archivo | Cambio |
-|---------|--------|
-| `src/Gateway.cpp` | Implementación real de `startDHCPServer()` + llamada en `begin()` + cleanup en `stop()` |
-| `src/Gateway.h` | Añadir campo `dhcps_handle_t _dhcpsHandle = nullptr` |
-| `test/mocks/dhcpserver/dhcpserver.h` | Declarar tipos y stubs de las funciones reales |
+| File | Change |
+|------|--------|
+| `src/Gateway.cpp` | Real implementation of `startDHCPServer()` + call in `begin()` + cleanup in `stop()` |
+| `src/Gateway.h` | Add field `dhcps_handle_t _dhcpsHandle = nullptr` |
+| `test/mocks/dhcpserver/dhcpserver.h` | Declare types and stubs for the real functions |
