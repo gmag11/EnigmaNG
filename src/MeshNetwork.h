@@ -65,6 +65,7 @@ public:
     // State
     bool      isConnected();
     bool      isGateway();
+    IPAddress getGatewayIP();  // Returns mesh IP of the connected gateway (MESH_NODE only)
     int       getNodeCount();
     int8_t    getRssiTo(const uint8_t* mac);
     int8_t    getRssiFromGateway();
@@ -153,6 +154,10 @@ private:
     uint32_t _lastBeaconMs = 0;
     uint32_t _lastPeerCheckMs = 0;
     uint32_t _sleepIntervalSec = 0;  // For MESH_BATTERY mode, announced in JOIN_BEACON
+
+    // Gateway tracking (MESH_NODE: IP of the connected gateway for default routing)
+    uint8_t  _knownGatewayMac[6] = {};
+    bool     _gatewayMacValid = false;
 
     // Internal frame handling
     static void _onFrameReceived(const uint8_t* srcMac, const uint8_t* data, size_t len, int8_t rssi);

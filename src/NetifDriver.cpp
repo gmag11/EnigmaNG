@@ -2,12 +2,9 @@
 
 #include "NetifDriver.h"
 #include "esp_netif.h"
-#include "esp_netif_net_stack.h"
 #include "esp_event.h"
-#include "lwip/esp_netif_net_stack.h"
 #include "lwip/netif.h"
 #include "lwip/ip4.h"
-#include "lwip/etharp.h"
 #include "lwip/tcpip.h"
 #include <cstring>
 
@@ -34,7 +31,7 @@ static err_t mesh_netif_init(struct netif* lwip_netif) {
     lwip_netif->name[1] = '0';
     lwip_netif->output = mesh_netif_output;
     lwip_netif->mtu = 216;  // ESP-NOW payload minus mesh header
-    lwip_netif->flags = NETIF_FLAG_UP | NETIF_FLAG_LINK_UP;
+    lwip_netif->flags = NETIF_FLAG_UP | NETIF_FLAG_LINK_UP | NETIF_FLAG_BROADCAST;
     return ERR_OK;
 }
 
@@ -88,17 +85,32 @@ void NetifDriver::stop() {
 bool NetifDriver::injectRxPacket(const uint8_t* data, size_t len) {
     if (!_lwipNetif) return false;
 
-    struct pbuf* p = pbuf_alloc(PBUF_RAW, (u16_t)len, PBUF_POOL);
+    // Allocate with PBUF_LINK layer: this reserves PBUF_LINK_HLEN (14 bytes) of headroom
+    // before the payload.  When lwIP forwards this packet through wifi_sta (an Ethernet
+    // interface), ethernet_output() prepends a 14-byte Ethernet header via pbuf_header().
+    // Without the headroom, pbuf_header() fails → ERR_BUF → packet silently dropped.
+    struct pbuf* p = pbuf_alloc(PBUF_LINK, (u16_t)len, PBUF_POOL);
     if (!p) return false;
 
     pbuf_take(p, data, (u16_t)len);
 
-    // tcpip_inpkt dispatches to the lwIP thread safely — no manual locking needed
-    if (tcpip_inpkt(p, _lwipNetif, _lwipNetif->input) != ERR_OK) {
+    // Dispatch to the lwIP TCPIP thread using the standard netif input path.
+    err_t err = tcpip_input(p, _lwipNetif);
+    if (err != ERR_OK) {
         pbuf_free(p);
         return false;
     }
     return true;
+}
+
+void NetifDriver::setDefaultGateway(IPAddress gw) {
+    if (!_lwipNetif) return;
+    ip4_addr_t gw_addr;
+    gw_addr.addr = (uint32_t)gw;
+    LOCK_TCPIP_CORE();
+    netif_set_gw(_lwipNetif, &gw_addr);
+    netif_set_default(_lwipNetif);  // make mesh0 the default netif for unmatched routes
+    UNLOCK_TCPIP_CORE();
 }
 
 void NetifDriver::setTxCallback(TxCallback cb, void* ctx) {

@@ -68,14 +68,22 @@ bool MeshNetwork::begin(const char* psk, IPAddress staticIP, MeshMode mode) {
             Serial.printf("[Mesh] WiFi uplink connected — IP: %s  GW: %s\n",
                           IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str(),
                           IPAddress(info.got_ip.ip_info.gw.addr).toString().c_str());
-            // Enable NAPT: all traffic from mesh0 → wifi_sta is masqueraded with the STA IP.
-            // info.got_ip.ip_info.ip.addr is in network byte order (from IDF esp_netif) — correct for ip_napt_enable.
+            // NAPT must be enabled on the inside interface (mesh0).
+            // Per Espressif docs: "NAPT must be enabled on the interface connecting
+            // to the target network" — i.e. the source/inside netif.
 #if defined(IP_NAPT)
-            LOCK_TCPIP_CORE();
-            ip_napt_enable(info.got_ip.ip_info.ip.addr, 1);
-            UNLOCK_TCPIP_CORE();
-            Serial.printf("[Mesh] NAPT enabled — masquerading with %s\n",
-                          IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str());
+            MeshNetwork* self = MeshNetwork::_instance;
+            if (self) {
+                // IPAddress cast to uint32_t yields lwIP network-byte-order —
+                // the same format ip_napt_enable() uses to match netif addresses.
+                uint32_t mesh0ip = (uint32_t)self->getLocalIP();
+                LOCK_TCPIP_CORE();
+                ip_napt_enable(mesh0ip, 1);
+                UNLOCK_TCPIP_CORE();
+                Serial.printf("[Mesh] NAPT enabled — mesh0 %s masquerades via STA %s\n",
+                              self->getLocalIP().toString().c_str(),
+                              IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str());
+            }
 #else
             Serial.println("[Mesh] WARNING: IP_NAPT not compiled in — mesh nodes cannot reach WiFi/Internet");
 #endif
@@ -190,6 +198,11 @@ bool MeshNetwork::isConnected() {
     return false;
 }
 bool MeshNetwork::isGateway() { return _mode == MESH_GATEWAY; }
+
+IPAddress MeshNetwork::getGatewayIP() {
+    if (!_gatewayMacValid) return IPAddress(0, 0, 0, 0);
+    return IPAddress(10, 200, _knownGatewayMac[4], _knownGatewayMac[5]);
+}
 
 int MeshNetwork::getNodeCount() {
     return (int)_peerMgr.getPeerCount();
@@ -438,6 +451,11 @@ void MeshNetwork::_handleJoinBeacon(const uint8_t* srcMac, const uint8_t* payloa
     // If we don't have this peer, initiate handshake
     PeerEntry* peer = _peerMgr.findPeer(srcMac);
     if (!peer) {
+        // Parse mode from beacon to track gateway MAC (needed to set default route later)
+        if (len >= 6 && payload[5] == (uint8_t)MESH_GATEWAY) {
+            memcpy(_knownGatewayMac, srcMac, 6);
+            _gatewayMacValid = true;
+        }
         Serial.printf("[Mesh] JOIN_BEACON from %02X:%02X:%02X:%02X:%02X:%02X — initiating handshake\n",
                       srcMac[0], srcMac[1], srcMac[2], srcMac[3], srcMac[4], srcMac[5]);
         _initiateHandshake(srcMac);
@@ -568,6 +586,13 @@ void MeshNetwork::_handleKeyExchReply(const uint8_t* srcMac, const uint8_t* payl
     // Add route for this peer (direct, hopCount=1)
     IPAddress peerIP(10, 200, srcMac[4], srcMac[5]);
     _router.addRoute(peerIP, srcMac, srcMac, 1);
+
+    // If this peer is the known gateway, install it as the default route on mesh0
+    // so that traffic to external IPs (e.g. 192.168.x.x) can be forwarded via NAT.
+    if (_mode == MESH_NODE && _gatewayMacValid && memcmp(srcMac, _knownGatewayMac, 6) == 0) {
+        _netifDrv.setDefaultGateway(peerIP);
+        Serial.printf("[Mesh] Default route via gateway %s\n", peerIP.toString().c_str());
+    }
 
     Serial.printf("[Mesh] Handshake COMPLETE with %02X:%02X:%02X:%02X:%02X:%02X → IP %s\n",
                   srcMac[0], srcMac[1], srcMac[2], srcMac[3], srcMac[4], srcMac[5],
@@ -711,7 +736,7 @@ void MeshNetwork::_handleData(const uint8_t* srcMac, const MeshFrameHeader& hdr,
     bool isBroadcast = (memcmp(hdr.dstMac, bcast, 6) == 0);
 
     // Deliver IPv4 packets to local lwIP stack via mesh0 netif
-    if ((isForUs || isBroadcast) && (Protocol)hdr.protocol == Protocol::IPv4 && len > 0) {
+    if ((isForUs || isBroadcast) && (Protocol)hdr.protocol == Protocol::IPv4 && len >= 20) {
         _netifDrv.injectRxPacket(payload, len);
     }
 
@@ -739,18 +764,16 @@ bool MeshNetwork::_netifTxCallback(const uint8_t* data, size_t len, void* ctx) {
     // Look up route by destination IP
     RouteEntry* route = self->_router.findRouteByIP(dstIP);
     if (route) {
-        // hdr.dstMac = final destination (route->destMac) so intermediate relay nodes
-        // know this frame is not for them and forward it correctly.
-        // Physical ESP-NOW delivery goes to route->nextHopMac (the immediate neighbor).
         if (len <= MESH_MAX_PAYLOAD) {
             return self->_sendFrameVia(route->destMac, route->nextHopMac,
                                        FrameType::DATA, Protocol::IPv4, data, len);
         }
-        // Fragment: each fragment carries finalDstMac in the header
+        // Fragment: heap-allocate to avoid overflowing the lwIP TCPIP task stack
         uint16_t fragId = self->_frag.nextFragId();
-        Fragmentation::Fragment fragments[FRAG_MAX_FRAGMENTS];
+        auto* fragments = new Fragmentation::Fragment[FRAG_MAX_FRAGMENTS];
+        if (!fragments) return false;
         uint8_t count = self->_frag.fragment(data, len, fragId, fragments, FRAG_MAX_FRAGMENTS);
-        if (count == 0) return false;
+        if (count == 0) { delete[] fragments; return false; }
         bool allOk = true;
         for (uint8_t i = 0; i < count; i++) {
             if (!self->_sendFrameVia(route->destMac, route->nextHopMac,
@@ -759,17 +782,42 @@ bool MeshNetwork::_netifTxCallback(const uint8_t* data, size_t len, void* ctx) {
                 allOk = false;
             }
         }
+        delete[] fragments;
         return allOk;
     }
 
     // No route — check if broadcast (255.255.255.255 or subnet broadcast)
     if (dstIP == IPAddress(255, 255, 255, 255) ||
         data[19] == 0xFF) {
-        uint8_t bcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
         return self->_sendBroadcastFrame(FrameType::DATA, Protocol::IPv4, data, len);
     }
 
-    Serial.printf("[Mesh] TX: no route to %s\n", dstIP.toString().c_str());
+    // No direct route — fall back to the known gateway (default route)
+    if (self->_gatewayMacValid) {
+        RouteEntry* gwRoute = self->_router.findRouteByMac(self->_knownGatewayMac);
+        if (gwRoute) {
+            if (len <= MESH_MAX_PAYLOAD) {
+                return self->_sendFrameVia(gwRoute->destMac, gwRoute->nextHopMac,
+                                           FrameType::DATA, Protocol::IPv4, data, len);
+            }
+            uint16_t fragId = self->_frag.nextFragId();
+            auto* fragments = new Fragmentation::Fragment[FRAG_MAX_FRAGMENTS];
+            if (!fragments) return false;
+            uint8_t count = self->_frag.fragment(data, len, fragId, fragments, FRAG_MAX_FRAGMENTS);
+            if (count == 0) { delete[] fragments; return false; }
+            bool allOk = true;
+            for (uint8_t i = 0; i < count; i++) {
+                if (!self->_sendFrameVia(gwRoute->destMac, gwRoute->nextHopMac,
+                                         FrameType::DATA_FRAG, Protocol::IPv4,
+                                         fragments[i].data, fragments[i].length)) {
+                    allOk = false;
+                }
+            }
+            delete[] fragments;
+            return allOk;
+        }
+    }
+
     return false;
 }
 
@@ -783,8 +831,14 @@ bool MeshNetwork::_sendFrame(const uint8_t* dstMac, FrameType type, Protocol pro
 bool MeshNetwork::_sendFrameVia(const uint8_t* finalDstMac, const uint8_t* nextHopMac,
                                 FrameType type, Protocol proto,
                                 const uint8_t* payload, size_t payloadLen) {
-    uint8_t frame[250];
-    if (MESH_HEADER_SIZE + payloadLen > sizeof(frame)) return false;
+    // Heap-allocate the frame buffer: this function can be called from the lwIP
+    // TCPIP task (via mesh_netif_output) where the stack is only ~3 KB. A 250-byte
+    // VLA on that stack, combined with the deep lwIP call chain, causes a stack
+    // canary crash.
+    const size_t frameSize = MESH_HEADER_SIZE + payloadLen;
+    if (frameSize > 250) return false;
+    uint8_t* frame = (uint8_t*)malloc(frameSize);
+    if (!frame) return false;
 
     MeshFrameHeader hdr = {};
     hdr.magic = MESH_MAGIC;
@@ -803,13 +857,17 @@ bool MeshNetwork::_sendFrameVia(const uint8_t* finalDstMac, const uint8_t* nextH
     }
 
     // Physical delivery to the immediate neighbor (may differ from finalDstMac in multi-hop)
-    return _phy.sendUnicast(nextHopMac, frame, MESH_HEADER_SIZE + payloadLen);
+    bool result = _phy.sendUnicast(nextHopMac, frame, frameSize);
+    free(frame);
+    return result;
 }
 
 bool MeshNetwork::_sendBroadcastFrame(FrameType type, Protocol proto,
                                       const uint8_t* payload, size_t payloadLen) {
-    uint8_t frame[250];
-    if (MESH_HEADER_SIZE + payloadLen > sizeof(frame)) return false;
+    const size_t frameSize = MESH_HEADER_SIZE + payloadLen;
+    if (frameSize > 250) return false;
+    uint8_t* frame = (uint8_t*)malloc(frameSize);
+    if (!frame) return false;
 
     MeshFrameHeader hdr = {};
     hdr.magic = MESH_MAGIC;
@@ -827,7 +885,9 @@ bool MeshNetwork::_sendBroadcastFrame(FrameType type, Protocol proto,
         memcpy(frame + MESH_HEADER_SIZE, payload, payloadLen);
     }
 
-    return _phy.sendBroadcast(frame, MESH_HEADER_SIZE + payloadLen);
+    bool result = _phy.sendBroadcast(frame, frameSize);
+    free(frame);
+    return result;
 }
 
 bool MeshNetwork::sendData(const uint8_t* dstMac, const uint8_t* data, size_t len) {

@@ -16,6 +16,9 @@ const uint8_t CHANNEL = 6;
 
 const char* WIFI_SSID = "***REMOVED***";
 const char* WIFI_PASS = "***REMOVED***";
+
+// LAN reachability probe (set to 0.0.0.0 to disable)
+const char* LAN_PING_TARGET = "0.0.0.0";
 // ────────────────────────────────────────────────────────────────
 
 // ─── Minimal ICMP header ─────────────────────────────────────────
@@ -201,6 +204,19 @@ void loop() {
     if (millis() - lastPing >= 10000) {
         lastPing = millis();
         pingAllNodes();
+
+        // LAN reachability probe
+        IPAddress lanTarget;
+        if (lanTarget.fromString(LAN_PING_TARGET)) {
+            uint32_t rtt = 0;
+            bool ok = pingOnce(lanTarget, &rtt);
+            if (ok) {
+                Serial.printf("[Ping] LAN %-15s  RTT=%4lu ms  OK\n",
+                              LAN_PING_TARGET, (unsigned long)rtt);
+            } else {
+                Serial.printf("[Ping] LAN %-15s  TIMEOUT\n", LAN_PING_TARGET);
+            }
+        }
     }
 
     // Status heartbeat every 30 seconds
