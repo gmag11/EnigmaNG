@@ -5,22 +5,18 @@
 #include "LinkLayer.h"
 #include <cstring>
 
-// ─── Static callback bridge ──────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// Construction / Destruction
+// ═══════════════════════════════════════════════════════════════════════
 
-static ProxyHandler* s_proxyInstance = nullptr;
+ProxyHandler::ProxyHandler() {}
 
-void ProxyHandler::_mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
-    if (s_proxyInstance) {
-        s_proxyInstance->_onMqttMessage(topic, payload, len);
+ProxyHandler::~ProxyHandler() {
+    if (_mqttHandle) {
+        esp_mqtt_client_stop(_mqttHandle);
+        esp_mqtt_client_destroy(_mqttHandle);
+        _mqttHandle = nullptr;
     }
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Construction / Initialization
-// ═══════════════════════════════════════════════════════════════════════
-
-ProxyHandler::ProxyHandler() : _mqtt(_tcpClient) {
-    s_proxyInstance = this;
 }
 
 void ProxyHandler::setBroker(const char* host, uint16_t port) {
@@ -35,39 +31,11 @@ void ProxyHandler::setBrokerAuth(const char* user, const char* password) {
 
 void ProxyHandler::begin(MeshNetwork* mesh) {
     _mesh = mesh;
-    _mqtt.setCallback(_mqttCallback);
-
-    if (_brokerHost[0] != '\0') {
-        _mqtt.setServer(_brokerHost, _brokerPort);
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Main loop — maintain MQTT connection
-// ═══════════════════════════════════════════════════════════════════════
-
-void ProxyHandler::loop() {
     if (_brokerHost[0] == '\0') return;  // No broker configured
-
-    _ensureMqttConnected();
-
-    if (_mqtt.connected()) {
-        _mqtt.loop();
-    }
-}
-
-void ProxyHandler::_ensureMqttConnected() {
-    if (_mqtt.connected()) return;
-
-    uint32_t now = millis();
-    if (now - _lastMqttReconnectMs < 5000) return;  // Rate-limit reconnections
-    _lastMqttReconnectMs = now;
-
-    Serial.printf("[Proxy] Connecting to MQTT %s:%u...\n", _brokerHost, _brokerPort);
 
     // Build client ID from MAC
     const uint8_t* mac = _mesh ? _mesh->getMAC() : nullptr;
-    char clientId[32];
+    char clientId[32] = {};
     if (mac) {
         snprintf(clientId, sizeof(clientId), "enigma-gw-%02x%02x%02x",
                  mac[3], mac[4], mac[5]);
@@ -75,26 +43,97 @@ void ProxyHandler::_ensureMqttConnected() {
         snprintf(clientId, sizeof(clientId), "enigma-gw-%lu", (unsigned long)millis());
     }
 
-    bool ok;
+    esp_mqtt_client_config_t config = {};
+    config.broker.address.hostname  = _brokerHost;
+    config.broker.address.port      = _brokerPort;
+    config.broker.address.transport = MQTT_TRANSPORT_OVER_TCP;
+    config.credentials.client_id    = clientId;
     if (_brokerUser[0] != '\0') {
-        ok = _mqtt.connect(clientId, _brokerUser, _brokerPass);
-    } else {
-        ok = _mqtt.connect(clientId);
+        config.credentials.username                    = _brokerUser;
+        config.credentials.authentication.password     = _brokerPass;
     }
 
-    if (ok) {
-        Serial.println("[Proxy] MQTT connected");
-        // Resubscribe all client topics
-        for (int c = 0; c < PROXY_MAX_CLIENTS; c++) {
-            if (!_clients[c].connected) continue;
-            for (int s = 0; s < _clients[c].subCount; s++) {
-                if (_clients[c].subscriptions[s][0] != '\0') {
-                    _mqtt.subscribe(_clients[c].subscriptions[s]);
+    _mqttHandle = esp_mqtt_client_init(&config);
+    if (!_mqttHandle) {
+        Serial.println("[Proxy] Failed to init MQTT client");
+        return;
+    }
+
+    esp_mqtt_client_register_event(_mqttHandle, MQTT_EVENT_ANY, _mqttEventHandler, this);
+    esp_mqtt_client_start(_mqttHandle);
+    Serial.printf("[Proxy] MQTT client started → %s:%u\n", _brokerHost, _brokerPort);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Main loop — reconnection managed automatically by esp_mqtt_client
+// ═══════════════════════════════════════════════════════════════════════
+
+void ProxyHandler::loop() {
+    // Reconnection is handled automatically by esp_mqtt_client.
+    // This method is kept for interface compatibility.
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// MQTT event handler (tasks 4.1–4.4)
+// ═══════════════════════════════════════════════════════════════════════
+
+void ProxyHandler::_mqttEventHandler(void* handler_args, esp_event_base_t base,
+                                     int32_t event_id, void* event_data) {
+    // NOTE: This callback executes in the esp_mqtt_client internal task.
+    // _clients and _mqttConnected are only written here and from handleProxyFrame()
+    // which runs from the Arduino loop task. For v1.0 single-threaded Arduino use
+    // this is safe; add a mutex if moving to multi-threaded IDF.
+    ProxyHandler* self = static_cast<ProxyHandler*>(handler_args);
+    esp_mqtt_event_handle_t event = static_cast<esp_mqtt_event_handle_t>(event_data);
+
+    switch ((esp_mqtt_event_id_t)event_id) {
+
+        case MQTT_EVENT_CONNECTED:  // task 4.2
+            Serial.println("[Proxy] MQTT connected");
+            self->_mqttConnected = true;
+            // Resubscribe all active client topics
+            for (int c = 0; c < PROXY_MAX_CLIENTS; c++) {
+                if (!self->_clients[c].connected) continue;
+                for (int s = 0; s < self->_clients[c].subCount; s++) {
+                    if (self->_clients[c].subscriptions[s][0] != '\0') {
+                        esp_mqtt_client_subscribe(self->_mqttHandle,
+                                                  self->_clients[c].subscriptions[s], 0);
+                    }
                 }
             }
+            break;
+
+        case MQTT_EVENT_DISCONNECTED:
+            Serial.println("[Proxy] MQTT disconnected");
+            self->_mqttConnected = false;
+            break;
+
+        case MQTT_EVENT_DATA: {  // task 4.3
+            // topic and data are NOT null-terminated in IDF MQTT events
+            char topic[64] = {};
+            size_t topicCopy = (event->topic_len < (int)(sizeof(topic) - 1))
+                               ? (size_t)event->topic_len : sizeof(topic) - 1;
+            memcpy(topic, event->topic, topicCopy);
+
+            self->_onMqttMessage(topic,
+                                 reinterpret_cast<uint8_t*>(event->data),
+                                 (unsigned int)event->data_len);
+            break;
         }
-    } else {
-        Serial.printf("[Proxy] MQTT connect failed, rc=%d\n", _mqtt.state());
+
+        case MQTT_EVENT_ERROR:  // task 4.4
+            if (event->error_handle) {
+                Serial.printf("[Proxy] MQTT error: type=%d, tls_err=0x%x, sock_err=%d\n",
+                              (int)event->error_handle->error_type,
+                              event->error_handle->esp_tls_last_esp_err,
+                              event->error_handle->esp_transport_sock_errno);
+            } else {
+                Serial.println("[Proxy] MQTT error (no detail)");
+            }
+            break;
+
+        default:
+            break;
     }
 }
 
@@ -203,8 +242,8 @@ void ProxyHandler::_handleDisconnect(const uint8_t* srcMac) {
     ProxyClient* c = _findClient(srcMac);
     if (c) {
         for (int s = 0; s < c->subCount; s++) {
-            if (c->subscriptions[s][0] != '\0' && _mqtt.connected()) {
-                _mqtt.unsubscribe(c->subscriptions[s]);
+            if (c->subscriptions[s][0] != '\0' && _mqttConnected) {
+                esp_mqtt_client_unsubscribe(_mqttHandle, c->subscriptions[s]);
             }
         }
     }
@@ -230,12 +269,15 @@ void ProxyHandler::_handlePublish(const uint8_t* srcMac, const uint8_t* payload,
     const uint8_t* msgPayload = payload + 4 + topicLen;
     size_t msgLen = len - 4 - topicLen;
 
-    if (!_mqtt.connected()) {
+    if (!_mqttConnected) {
         Serial.println("[Proxy] MQTT not connected — dropping publish");
         return;
     }
 
-    bool ok = _mqtt.publish(topic, msgPayload, msgLen, retain);
+    int msgId = esp_mqtt_client_publish(_mqttHandle, topic,
+                                        reinterpret_cast<const char*>(msgPayload),
+                                        (int)msgLen, (int)qos, (int)retain);
+    bool ok = (msgId >= 0);
     if (ok && qos > 0) {
         _sendProxyPuback(srcMac, 0);  // Simplified: packetId = 0
     }
@@ -264,8 +306,8 @@ void ProxyHandler::_handleSubscribe(const uint8_t* srcMac, const uint8_t* payloa
     }
 
     // Subscribe on MQTT broker
-    if (_mqtt.connected()) {
-        _mqtt.subscribe(topic);
+    if (_mqttConnected) {
+        esp_mqtt_client_subscribe(_mqttHandle, topic, 0);
         Serial.printf("[Proxy] Subscribed '%s' for %02X:%02X\n", topic, srcMac[4], srcMac[5]);
     }
 }
@@ -292,8 +334,8 @@ void ProxyHandler::_handleUnsubscribe(const uint8_t* srcMac, const uint8_t* payl
         }
     }
 
-    if (_mqtt.connected()) {
-        _mqtt.unsubscribe(topic);
+    if (_mqttConnected) {
+        esp_mqtt_client_unsubscribe(_mqttHandle, topic);
     }
 }
 

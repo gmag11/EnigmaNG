@@ -5,8 +5,7 @@
 
 #include <Arduino.h>
 #include <IPAddress.h>
-#include <WiFiClient.h>
-#include <PubSubClient.h>
+#include <mqtt_client.h>
 #include "Crypto.h"
 
 // Proxy message types — must match MeshNode8266.h
@@ -38,6 +37,7 @@ class MeshNetwork;  // Forward declaration
 class ProxyHandler {
 public:
     ProxyHandler();
+    ~ProxyHandler();
 
     // Set broker configuration
     void setBroker(const char* host, uint16_t port);
@@ -72,13 +72,12 @@ private:
     ProxyClient _clients[PROXY_MAX_CLIENTS] = {};
 
     // ─── MQTT ────────────────────────────────────────────────────────
-    WiFiClient  _tcpClient;
-    PubSubClient _mqtt;
+    esp_mqtt_client_handle_t _mqttHandle = nullptr;
+    bool     _mqttConnected = false;
     char     _brokerHost[48] = {};
     uint16_t _brokerPort = 1883;
     char     _brokerUser[32] = {};
     char     _brokerPass[32] = {};
-    uint32_t _lastMqttReconnectMs = 0;
 
     // ─── Reference ───────────────────────────────────────────────────
     MeshNetwork* _mesh = nullptr;
@@ -94,9 +93,8 @@ private:
     void _handleSubscribe(const uint8_t* srcMac, const uint8_t* payload, size_t len);
     void _handleUnsubscribe(const uint8_t* srcMac, const uint8_t* payload, size_t len);
 
-    void _ensureMqttConnected();
+    static void _mqttEventHandler(void* handler_args, esp_event_base_t base, int32_t event_id, void* event_data);
     void _onMqttMessage(char* topic, uint8_t* payload, unsigned int len);
-    static void _mqttCallback(char* topic, uint8_t* payload, unsigned int len);
 
     void _sendProxyMessage(const uint8_t* dstMac, const char* topic, const uint8_t* payload, size_t len);
     void _sendProxyPuback(const uint8_t* dstMac, uint16_t packetId);
