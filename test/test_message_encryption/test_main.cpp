@@ -717,6 +717,216 @@ void test_same_nonce_same_ciphertext_determinism(void) {
 }
 
 // ---------------------------------------------------------------------------
+// ── Tests adicionales de fidelidad (recomendaciones del experto) ────────────
+// ---------------------------------------------------------------------------
+
+// ── 1. Nonce único: distinto seq → distinto nonce → distinto ciphertext ──────
+// Garantiza que el sistema no reutiliza nonces entre frames consecutivos.
+void test_consecutive_frames_have_different_nonces(void) {
+    const uint8_t payload[] = {0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04};
+    const size_t  ptLen     = sizeof(payload);
+    uint16_t networkId = ((uint16_t)g_networkId[0] << 8) | g_networkId[1];
+
+    // Frame 1: epoch=1, seq=200
+    uint8_t frame1[MESH_FRAME_MAX_SIZE] = {};
+    size_t  frameLen1 = buildEncryptedFrame(
+        FrameType::DATA, Protocol::IPv4,
+        MAC_A, MAC_B, networkId, 1, 200,
+        g_linkKeyA, payload, ptLen, frame1, sizeof(frame1));
+    TEST_ASSERT_GREATER_THAN(0, frameLen1);
+
+    // Frame 2: epoch=1, seq=201 (siguiente frame, mismo contenido y clave)
+    uint8_t frame2[MESH_FRAME_MAX_SIZE] = {};
+    size_t  frameLen2 = buildEncryptedFrame(
+        FrameType::DATA, Protocol::IPv4,
+        MAC_A, MAC_B, networkId, 1, 201,
+        g_linkKeyA, payload, ptLen, frame2, sizeof(frame2));
+    TEST_ASSERT_GREATER_THAN(0, frameLen2);
+
+    // Los ciphertexts deben ser distintos (nonces distintos → ciphertexts distintos)
+    const uint8_t* cipher1 = frame1 + MESH_HEADER_SIZE;
+    const uint8_t* cipher2 = frame2 + MESH_HEADER_SIZE;
+    TEST_ASSERT_FALSE_MESSAGE(memcmp(cipher1, cipher2, ptLen) == 0,
+                              "Consecutive frames must produce different ciphertexts (unique nonces)");
+
+    // Ambos frames deben poder descifrarse correctamente
+    uint8_t rec1[sizeof(payload)] = {}, rec2[sizeof(payload)] = {};
+    TEST_ASSERT_TRUE(decryptFrame(frame1, frameLen1, g_linkKeyA, rec1, ptLen));
+    TEST_ASSERT_TRUE(decryptFrame(frame2, frameLen2, g_linkKeyA, rec2, ptLen));
+    TEST_ASSERT_EQUAL_MEMORY(payload, rec1, ptLen);
+    TEST_ASSERT_EQUAL_MEMORY(payload, rec2, ptLen);
+}
+
+// ── 2a. Tamaño límite inferior: payload de 0 bytes ───────────────────────────
+// Solo existe el header (AAD) y el GCM tag; no hay ciphertext.
+void test_zero_byte_payload_encrypt_decrypt(void) {
+    uint16_t networkId = ((uint16_t)g_networkId[0] << 8) | g_networkId[1];
+
+    uint8_t frame[MESH_FRAME_MAX_SIZE] = {};
+    size_t  frameLen = buildEncryptedFrame(
+        FrameType::DATA, Protocol::MESH_INTERNAL,
+        MAC_A, MAC_B, networkId, 1, 210,
+        g_linkKeyA, nullptr, 0,
+        frame, sizeof(frame));
+
+    // frameLen debe ser exactamente MESH_HEADER_SIZE + MESH_GCM_TAG_SIZE
+    TEST_ASSERT_EQUAL_MESSAGE(MESH_HEADER_SIZE + MESH_GCM_TAG_SIZE, (int)frameLen,
+                              "Zero-byte payload frame must be header + tag only");
+
+    // Debe poder descifrarse (y recuperar 0 bytes)
+    uint8_t dummy[1] = {};
+    TEST_ASSERT_TRUE_MESSAGE(decryptFrame(frame, frameLen, g_linkKeyA, dummy, 0),
+                             "Zero-byte payload must decrypt successfully");
+}
+
+// ── 2b. Tamaño límite superior: payload de MESH_MAX_PAYLOAD bytes ─────────────
+void test_max_payload_encrypt_decrypt(void) {
+    uint8_t payload[MESH_MAX_PAYLOAD];
+    for (size_t i = 0; i < MESH_MAX_PAYLOAD; i++) payload[i] = (uint8_t)(i & 0xFF);
+    const size_t ptLen = MESH_MAX_PAYLOAD;
+
+    uint16_t networkId = ((uint16_t)g_networkId[0] << 8) | g_networkId[1];
+
+    uint8_t frame[MESH_FRAME_MAX_SIZE] = {};
+    size_t  frameLen = buildEncryptedFrame(
+        FrameType::DATA, Protocol::IPv4,
+        MAC_A, MAC_B, networkId, 1, 211,
+        g_linkKeyA, payload, ptLen, frame, sizeof(frame));
+
+    TEST_ASSERT_EQUAL_MESSAGE(MESH_HEADER_SIZE + MESH_MAX_PAYLOAD + MESH_GCM_TAG_SIZE,
+                              (int)frameLen,
+                              "Max-payload frame must have expected total size");
+
+    const uint8_t* cipher = frame + MESH_HEADER_SIZE;
+    TEST_ASSERT_FALSE_MESSAGE(memcmp(cipher, payload, ptLen) == 0,
+                              "Max-payload: ciphertext must differ from plaintext");
+    TEST_ASSERT_TRUE_MESSAGE(noPlaintextLeak(frame, frameLen, payload, ptLen),
+                             "Max-payload: plaintext must not appear in frame");
+
+    uint8_t recovered[MESH_MAX_PAYLOAD] = {};
+    TEST_ASSERT_TRUE_MESSAGE(decryptFrame(frame, frameLen, g_linkKeyA, recovered, ptLen),
+                             "Max-payload: decryption must succeed");
+    TEST_ASSERT_EQUAL_MEMORY_MESSAGE(payload, recovered, ptLen,
+                                     "Max-payload: decrypted payload must match original");
+}
+
+// ── 3. Integridad de posición del tag ────────────────────────────────────────
+// Verifica que el tag GCM está exactamente en frame[MESH_HEADER_SIZE + ptLen]
+// y tiene MESH_GCM_TAG_SIZE bytes de longitud.
+void test_tag_position_and_size_in_frame(void) {
+    const uint8_t payload[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+    const size_t  ptLen     = sizeof(payload);
+    uint16_t networkId = ((uint16_t)g_networkId[0] << 8) | g_networkId[1];
+
+    uint8_t frame[MESH_FRAME_MAX_SIZE] = {};
+    size_t  frameLen = buildEncryptedFrame(
+        FrameType::DATA, Protocol::IPv4,
+        MAC_A, MAC_B, networkId, 1, 220,
+        g_linkKeyA, payload, ptLen, frame, sizeof(frame));
+
+    TEST_ASSERT_EQUAL((int)(MESH_HEADER_SIZE + ptLen + MESH_GCM_TAG_SIZE), (int)frameLen);
+
+    // Extraer el tag desde la posición esperada
+    const uint8_t* tagInFrame = frame + MESH_HEADER_SIZE + ptLen;
+
+    // Recifrar independientemente para obtener el tag de referencia
+    uint8_t nonce[MESH_GCM_NONCE_SIZE];
+    Crypto::buildNonce(1, 220, MAC_A, nonce);
+    uint8_t refCipher[sizeof(payload)], refTag[MESH_GCM_TAG_SIZE];
+    Crypto::encrypt(g_linkKeyA, nonce,
+                    frame, MESH_HEADER_SIZE,
+                    payload, ptLen,
+                    refCipher, refTag);
+
+    TEST_ASSERT_EQUAL_MEMORY_MESSAGE(refTag, tagInFrame, MESH_GCM_TAG_SIZE,
+                                     "GCM tag must be located at frame[MESH_HEADER_SIZE + ptLen]");
+
+    // Corromper solo el tag y verificar que el descifrado falla
+    uint8_t corrupted[MESH_FRAME_MAX_SIZE];
+    memcpy(corrupted, frame, frameLen);
+    corrupted[MESH_HEADER_SIZE + ptLen] ^= 0xFF;  // primer byte del tag
+
+    uint8_t rec[sizeof(payload)] = {};
+    TEST_ASSERT_FALSE_MESSAGE(decryptFrame(corrupted, frameLen, g_linkKeyA, rec, ptLen),
+                              "Corrupted tag must cause authentication failure");
+}
+
+// ── 4. Propiedad AAD: mismo plaintext+key+nonce, AAD diferente → tag diferente ─
+// Garantiza que el header (AAD) está criptográficamente ligado al ciphertext.
+void test_different_aad_produces_different_tag(void) {
+    const uint8_t payload[] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11};
+    const size_t  ptLen     = sizeof(payload);
+
+    // Dos headers con frameType diferente (mismo epoch/seq/MACs)
+    uint16_t networkId = ((uint16_t)g_networkId[0] << 8) | g_networkId[1];
+
+    uint8_t frame1[MESH_FRAME_MAX_SIZE] = {};
+    size_t  frameLen1 = buildEncryptedFrame(
+        FrameType::DATA, Protocol::IPv4,
+        MAC_A, MAC_B, networkId, 3, 230,
+        g_linkKeyA, payload, ptLen, frame1, sizeof(frame1));
+    TEST_ASSERT_GREATER_THAN(0, frameLen1);
+
+    uint8_t frame2[MESH_FRAME_MAX_SIZE] = {};
+    size_t  frameLen2 = buildEncryptedFrame(
+        FrameType::PROXY, Protocol::IPv4,   // distinto FrameType → distinta AAD
+        MAC_A, MAC_B, networkId, 3, 230,    // mismo nonce (epoch+seq+src)
+        g_linkKeyA, payload, ptLen, frame2, sizeof(frame2));
+    TEST_ASSERT_GREATER_THAN(0, frameLen2);
+
+    // Los tags deben ser distintos aunque el ciphertext sea el mismo
+    const uint8_t* tag1 = frame1 + MESH_HEADER_SIZE + ptLen;
+    const uint8_t* tag2 = frame2 + MESH_HEADER_SIZE + ptLen;
+    TEST_ASSERT_FALSE_MESSAGE(memcmp(tag1, tag2, MESH_GCM_TAG_SIZE) == 0,
+                              "Different AAD must produce different GCM tag");
+
+    // Intentar descifrar frame1 con el tag de frame2 debe fallar:
+    // reemplazar el tag en una copia de frame1 con el tag de frame2
+    uint8_t tampered[MESH_FRAME_MAX_SIZE];
+    memcpy(tampered, frame1, frameLen1);
+    memcpy(tampered + MESH_HEADER_SIZE + ptLen, tag2, MESH_GCM_TAG_SIZE);
+
+    uint8_t rec[sizeof(payload)] = {};
+    TEST_ASSERT_FALSE_MESSAGE(decryptFrame(tampered, frameLen1, g_linkKeyA, rec, ptLen),
+                              "Tag from different AAD must not authenticate another frame");
+}
+
+// ── 5. Propiedad nonce: mismo plaintext+key, nonce diferente → ciphertext diferente
+void test_different_nonce_produces_different_ciphertext(void) {
+    const uint8_t payload[] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
+    const size_t  ptLen     = sizeof(payload);
+    uint16_t networkId = ((uint16_t)g_networkId[0] << 8) | g_networkId[1];
+
+    // Misma clave y payload, pero epoch diferente (→ nonce diferente)
+    uint8_t frame1[MESH_FRAME_MAX_SIZE] = {};
+    size_t  fl1 = buildEncryptedFrame(
+        FrameType::DATA, Protocol::IPv4,
+        MAC_A, MAC_B, networkId, 1, 240,
+        g_linkKeyA, payload, ptLen, frame1, sizeof(frame1));
+
+    uint8_t frame2[MESH_FRAME_MAX_SIZE] = {};
+    size_t  fl2 = buildEncryptedFrame(
+        FrameType::DATA, Protocol::IPv4,
+        MAC_A, MAC_B, networkId, 2, 240,   // epoch 2 → nonce diferente
+        g_linkKeyA, payload, ptLen, frame2, sizeof(frame2));
+
+    TEST_ASSERT_GREATER_THAN(0, fl1);
+    TEST_ASSERT_GREATER_THAN(0, fl2);
+
+    const uint8_t* cipher1 = frame1 + MESH_HEADER_SIZE;
+    const uint8_t* cipher2 = frame2 + MESH_HEADER_SIZE;
+    TEST_ASSERT_FALSE_MESSAGE(memcmp(cipher1, cipher2, ptLen) == 0,
+                              "Different nonce must produce different ciphertext");
+
+    // Ambos deben descifrarse correctamente con su propio frame
+    uint8_t rec1[sizeof(payload)] = {}, rec2[sizeof(payload)] = {};
+    TEST_ASSERT_TRUE(decryptFrame(frame1, fl1, g_linkKeyA, rec1, ptLen));
+    TEST_ASSERT_TRUE(decryptFrame(frame2, fl2, g_linkKeyA, rec2, ptLen));
+    TEST_ASSERT_EQUAL_MEMORY(payload, rec1, ptLen);
+    TEST_ASSERT_EQUAL_MEMORY(payload, rec2, ptLen);
+}
+
+// ---------------------------------------------------------------------------
 // main / runner
 // ---------------------------------------------------------------------------
 
@@ -748,6 +958,13 @@ void setup() {
     RUN_TEST(test_tampered_frame_fails_authentication);
     RUN_TEST(test_tampered_header_aad_fails_authentication);
     RUN_TEST(test_same_nonce_same_ciphertext_determinism);
+    // Tests de fidelidad adicionales
+    RUN_TEST(test_consecutive_frames_have_different_nonces);
+    RUN_TEST(test_zero_byte_payload_encrypt_decrypt);
+    RUN_TEST(test_max_payload_encrypt_decrypt);
+    RUN_TEST(test_tag_position_and_size_in_frame);
+    RUN_TEST(test_different_aad_produces_different_tag);
+    RUN_TEST(test_different_nonce_produces_different_ciphertext);
     UNITY_END();
 }
 void loop() {}
@@ -777,6 +994,13 @@ int main(int argc, char** argv) {
     RUN_TEST(test_tampered_frame_fails_authentication);
     RUN_TEST(test_tampered_header_aad_fails_authentication);
     RUN_TEST(test_same_nonce_same_ciphertext_determinism);
+    // Tests de fidelidad adicionales
+    RUN_TEST(test_consecutive_frames_have_different_nonces);
+    RUN_TEST(test_zero_byte_payload_encrypt_decrypt);
+    RUN_TEST(test_max_payload_encrypt_decrypt);
+    RUN_TEST(test_tag_position_and_size_in_frame);
+    RUN_TEST(test_different_aad_produces_different_tag);
+    RUN_TEST(test_different_nonce_produces_different_ciphertext);
     return UNITY_END();
 }
 #endif
