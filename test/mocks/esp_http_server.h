@@ -27,9 +27,12 @@ typedef struct {
     uint16_t server_port;
     int      max_uri_handlers;
     bool     lru_purge_enable;
+    bool     (*uri_match_fn)(const char* reference_uri, const char* uri_to_match, size_t match_upto);
 } httpd_config_t;
 
-#define HTTPD_DEFAULT_CONFIG() httpd_config_t{80, 8}
+#define HTTPD_DEFAULT_CONFIG() httpd_config_t{80, 8, false, nullptr}
+
+inline bool httpd_uri_match_wildcard(const char*, const char*, size_t) { return true; }
 #define HTTPD_401_UNAUTHORIZED  401
 #define HTTPD_400_BAD_REQUEST   400
 #define HTTPD_404_NOT_FOUND     404

@@ -43,6 +43,7 @@ bool Gateway::begin(const char* wifiSsid, const char* wifiPass) {
 }
 
 void Gateway::stop() {
+    _dnsProxy.stop();
     WiFi.disconnect(true);
     _natEnabled = false;
 }
@@ -80,6 +81,22 @@ bool Gateway::startDHCPServer(IPAddress poolStart, IPAddress poolEnd) {
     // Uses lwIP built-in DHCP server
     _dhcpRunning = true;
     return true;
+}
+
+bool Gateway::enableDns(IPAddress meshIp) {
+    // Refresh upstream DNS from WiFi STA before starting
+    esp_netif_t* staNif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (staNif) {
+        esp_netif_dns_info_t dnsInfo = {};
+        if (esp_netif_get_dns_info(staNif, ESP_NETIF_DNS_MAIN, &dnsInfo) == ESP_OK) {
+            _dnsProxy.setUpstreamDns(ntohl(dnsInfo.ip.addr));
+        }
+    }
+    return _dnsProxy.begin(meshIp);
+}
+
+void Gateway::disableDns() {
+    _dnsProxy.stop();
 }
 
 uint8_t Gateway::getMetric() {

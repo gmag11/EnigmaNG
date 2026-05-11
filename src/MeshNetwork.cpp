@@ -152,6 +152,12 @@ bool MeshNetwork::begin(const char* psk, IPAddress staticIP, MeshMode mode) {
     _lastBeaconMs = millis();
     _lastPeerCheckMs = millis();
 
+    // Gateway: start DNS proxy automatically
+    if (mode == MESH_GATEWAY) {
+        _dnsProxy.begin(_localIP);
+        Serial.println("[Mesh] DNS proxy started on UDP/53");
+    }
+
     Serial.printf("[Mesh] Started in mode %d (channel %d)\n", mode, _channel);
     return true;
 }
@@ -238,6 +244,9 @@ void MeshNetwork::onNodeLeave(MeshNodeCallback cb) { _onLeaveCb = cb; }
 // ─── Gateway APIs ─────────────────────────────────────────────────────────────
 
 bool MeshNetwork::startWebServer(uint16_t port) {
+    // Attach DNS proxy so WebUI can serve /dns and /api/v1/dns/*
+    _webUI.setDnsProxy(&_dnsProxy);
+
     // Try immediately (AP may already be fully up)
     if (_webUI.begin(port, "admin", "admin", this)) return true;
 
@@ -358,8 +367,13 @@ void MeshNetwork::loop() {
 
 void MeshNetwork::shutdown() {
     _connected = false;
+    _dnsProxy.stop();
     _onboarding.stopProvisioningAP();
     _webUI.stop();
+}
+
+void MeshNetwork::disableDns() {
+    _dnsProxy.stop();
 }
 
 // ─── Frame Reception ──────────────────────────────────────────────────────────

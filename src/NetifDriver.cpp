@@ -9,6 +9,7 @@
 #include "lwip/ip4.h"
 #include "lwip/tcpip.h"
 #include "lwip/pbuf.h"
+#include "lwip/dns.h"
 #include <cstring>
 
 // --- esp_netif custom driver ---
@@ -212,6 +213,12 @@ void NetifDriver::setDefaultGateway(IPAddress gw) {
 
     // Make mesh0 the default netif for unmatched routes
     esp_netif_set_default_netif(_espNetif);
+
+    // Configure the gateway's mesh IP as the primary DNS server in lwIP so that
+    // all mesh node DNS queries are directed to the gateway's DNS proxy.
+    ip_addr_t gw_addr;
+    gw_addr.addr = static_cast<uint32_t>(gw);
+    dns_setserver(0, &gw_addr);
 }
 
 void NetifDriver::setTxCallback(TxCallback cb, void* ctx) {

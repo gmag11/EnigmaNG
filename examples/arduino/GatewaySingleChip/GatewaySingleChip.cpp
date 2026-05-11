@@ -66,6 +66,13 @@ void setup() {
         mesh.connectUplink(WIFI_SSID, WIFI_PASS);
     }
 
+    // DNS proxy is enabled by default on the gateway (UDP/53).
+    // It proxies queries to the upstream LAN DNS, caches responses, and
+    // supports custom A records manageable via the Web UI at /dns.
+    // Nodes automatically use the gateway as their DNS server (no DHCP needed).
+    // Call mesh.disableDns() here if you do not want the DNS proxy:
+    // mesh.disableDns();
+
     Serial.println("\n--- Gateway ready. Nodes can now join. ---\n");
 }
 

@@ -4,6 +4,7 @@
 #if !defined(ESP8266)
 
 #include "meshConfig.h"
+#include "DnsProxy.h"
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -42,6 +43,15 @@ public:
     // DHCP server for mesh nodes
     bool startDHCPServer(IPAddress poolStart, IPAddress poolEnd);
 
+    // DNS proxy (opt-in): starts DNS server on meshIp:53 serving all mesh nodes.
+    // Call after begin(). Nodes will automatically use this gateway as DNS server
+    // via dns_setserver() in NetifDriver::setDefaultGateway().
+    bool enableDns(IPAddress meshIp);
+    void disableDns();
+
+    // Access to DNS subsystem (for WebUI REST API)
+    DnsProxy& getDnsProxy() { return _dnsProxy; }
+
     // Gateway selection metrics
     uint8_t getMetric();
     void announcePresence();
@@ -55,6 +65,7 @@ public:
 
 private:
     NativeWifiUplink _uplink;
+    DnsProxy _dnsProxy;
     bool _natEnabled = false;
     bool _dhcpRunning = false;
     uint32_t _lastAnnounceMs = 0;

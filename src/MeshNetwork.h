@@ -19,6 +19,7 @@
 #include "Onboarding.h"
 #include "WebUI.h"
 #include "ProxyHandler.h"
+#include "DnsProxy.h"
 
 enum MeshMode : uint8_t {
     MESH_NODE    = 0,   // Standard node with relay enabled
@@ -90,6 +91,12 @@ public:
     void setMqttBroker(const char* host, uint16_t port);
     bool setStaticIPTable(const std::vector<std::pair<String, IPAddress>>& table);
 
+    // DNS proxy (gateway-only, starts automatically on begin()).
+    // Serves DNS on the gateway's mesh IP (UDP/53); proxies to the upstream
+    // LAN DNS and caches responses. Custom A records can be managed via the
+    // Web UI at /dns. Call disableDns() to stop it if not needed.
+    void disableDns();
+
     // Time synchronization
     time_t getMeshTime();
     void   onTimeSync(MeshTimeCallback cb);
@@ -102,6 +109,7 @@ public:
     PeerManager& getPeerManager() { return _peerMgr; }
     Router& getRouter() { return _router; }
     MeshPhysicalLayer& getPhysical() { return _phy; }
+    DnsProxy& getDnsProxy() { return _dnsProxy; }
 
 private:
     MeshMode _mode = MESH_NODE;
@@ -122,6 +130,7 @@ private:
     Onboarding _onboarding;
     WebUI _webUI;
     ProxyHandler _proxy;
+    DnsProxy _dnsProxy;
 
     // Sequence counter
     uint16_t _seqCounter = 0;

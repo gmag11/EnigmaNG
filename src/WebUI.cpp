@@ -13,21 +13,27 @@ bool WebUI::begin(uint16_t port, const char* username, const char* password, Mes
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = port;
-    config.max_uri_handlers = 12;
+    config.max_uri_handlers = 18;
+    config.uri_match_fn = httpd_uri_match_wildcard;
 
     if (httpd_start(&_server, &config) != ESP_OK) {
         return false;
     }
 
     // Register URI handlers
-    httpd_uri_t root      = { .uri = "/",              .method = HTTP_GET,  .handler = _handleRoot,       .user_ctx = this };
-    httpd_uri_t status    = { .uri = "/api/v1/status", .method = HTTP_GET,  .handler = _handleStatus,     .user_ctx = this };
-    httpd_uri_t nodes     = { .uri = "/api/v1/nodes",  .method = HTTP_GET,  .handler = _handleNodes,      .user_ctx = this };
-    httpd_uri_t routes    = { .uri = "/api/v1/routes", .method = HTTP_GET,  .handler = _handleRoutes,     .user_ctx = this };
-    httpd_uri_t peers     = { .uri = "/api/v1/peers",  .method = HTTP_GET,  .handler = _handlePeers,      .user_ctx = this };
-    httpd_uri_t topology  = { .uri = "/api/v1/topology", .method = HTTP_GET, .handler = _handleTopology,  .user_ctx = this };
-    httpd_uri_t cfgGet    = { .uri = "/api/v1/config", .method = HTTP_GET,  .handler = _handleConfig,     .user_ctx = this };
-    httpd_uri_t cfgPost   = { .uri = "/api/v1/config", .method = HTTP_POST, .handler = _handleConfigPost, .user_ctx = this };
+    httpd_uri_t root      = { .uri = "/",              .method = HTTP_GET,    .handler = _handleRoot,          .user_ctx = this };
+    httpd_uri_t status    = { .uri = "/api/v1/status", .method = HTTP_GET,    .handler = _handleStatus,        .user_ctx = this };
+    httpd_uri_t nodes     = { .uri = "/api/v1/nodes",  .method = HTTP_GET,    .handler = _handleNodes,         .user_ctx = this };
+    httpd_uri_t routes    = { .uri = "/api/v1/routes", .method = HTTP_GET,    .handler = _handleRoutes,        .user_ctx = this };
+    httpd_uri_t peers     = { .uri = "/api/v1/peers",  .method = HTTP_GET,    .handler = _handlePeers,         .user_ctx = this };
+    httpd_uri_t topology  = { .uri = "/api/v1/topology", .method = HTTP_GET,  .handler = _handleTopology,      .user_ctx = this };
+    httpd_uri_t cfgGet    = { .uri = "/api/v1/config", .method = HTTP_GET,    .handler = _handleConfig,        .user_ctx = this };
+    httpd_uri_t cfgPost   = { .uri = "/api/v1/config", .method = HTTP_POST,   .handler = _handleConfigPost,    .user_ctx = this };
+    httpd_uri_t dnsPage   = { .uri = "/dns",            .method = HTTP_GET,   .handler = _handleDnsPage,        .user_ctx = this };
+    httpd_uri_t dnsRGet   = { .uri = "/api/v1/dns/records",  .method = HTTP_GET,    .handler = _handleDnsRecordsGet,   .user_ctx = this };
+    httpd_uri_t dnsRPost  = { .uri = "/api/v1/dns/records",  .method = HTTP_POST,   .handler = _handleDnsRecordsPost,  .user_ctx = this };
+    httpd_uri_t dnsRDel   = { .uri = "/api/v1/dns/records/*",.method = HTTP_DELETE, .handler = _handleDnsRecordsDelete,.user_ctx = this };
+    httpd_uri_t dnsCacheH = { .uri = "/api/v1/dns/cache",    .method = HTTP_GET,    .handler = _handleDnsCache,        .user_ctx = this };
 
     httpd_register_uri_handler(_server, &root);
     httpd_register_uri_handler(_server, &status);
@@ -37,6 +43,11 @@ bool WebUI::begin(uint16_t port, const char* username, const char* password, Mes
     httpd_register_uri_handler(_server, &topology);
     httpd_register_uri_handler(_server, &cfgGet);
     httpd_register_uri_handler(_server, &cfgPost);
+    httpd_register_uri_handler(_server, &dnsPage);
+    httpd_register_uri_handler(_server, &dnsRGet);
+    httpd_register_uri_handler(_server, &dnsRPost);
+    httpd_register_uri_handler(_server, &dnsRDel);
+    httpd_register_uri_handler(_server, &dnsCacheH);
 
     return true;
 }
@@ -457,6 +468,331 @@ esp_err_t WebUI::_handleMetrics(httpd_req_t* req) {
 
     httpd_resp_set_type(req, "text/plain");
     httpd_resp_send(req, metrics, strlen(metrics));
+    return ESP_OK;
+}
+
+// ─── DNS API endpoints ────────────────────────────────────────────────────────
+
+// Helper: URL-decode a %XX encoded string in-place.
+static void _urlDecode(char* s) {
+    char* w = s;
+    while (*s) {
+        if (*s == '%' && s[1] && s[2]) {
+            char hex[3] = { s[1], s[2], 0 };
+            *w++ = (char)strtol(hex, nullptr, 16);
+            s += 3;
+        } else {
+            *w++ = *s++;
+        }
+    }
+    *w = '\0';
+}
+
+// GET /api/v1/dns/records — return JSON array of custom DNS records (Digest Auth)
+esp_err_t WebUI::_handleDnsRecordsGet(httpd_req_t* req) {
+    WebUI* self = (WebUI*)req->user_ctx;
+    if (!self->_checkDigestAuth(req)) return ESP_OK;
+
+    DnsProxy* dns = self->_dns;
+    if (!dns) {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, "[]", 2);
+        return ESP_OK;
+    }
+
+    const auto& recs = dns->customRecords().getAll();
+    // Each record: {"name":"...","ip":"..."}  max ~80 chars
+    char* buf = (char*)malloc(80 * recs.size() + 4);
+    if (!buf) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_OK;
+    }
+    size_t pos = 0;
+    buf[pos++] = '[';
+    for (size_t i = 0; i < recs.size(); i++) {
+        if (i > 0) buf[pos++] = ',';
+        pos += snprintf(buf + pos, 80, "{\"name\":\"%s\",\"ip\":\"%s\"}",
+                        recs[i].name, recs[i].ip.toString().c_str());
+    }
+    buf[pos++] = ']';
+    buf[pos] = '\0';
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, buf, (int)pos);
+    free(buf);
+    return ESP_OK;
+}
+
+// POST /api/v1/dns/records — add a custom DNS record.
+// Body: {"name":"host.local","ip":"192.168.1.10"}
+// Returns 400 if IP is invalid or body malformed, 200 {"ok":true} on success.
+esp_err_t WebUI::_handleDnsRecordsPost(httpd_req_t* req) {
+    WebUI* self = (WebUI*)req->user_ctx;
+    if (!self->_checkDigestAuth(req)) return ESP_OK;
+
+    DnsProxy* dns = self->_dns;
+    if (!dns) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "DNS not enabled");
+        return ESP_OK;
+    }
+
+    char body[256] = {};
+    int received = httpd_req_recv(req, body, sizeof(body) - 1);
+    if (received <= 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Empty body");
+        return ESP_OK;
+    }
+
+    // Extract "name" field
+    char name[64] = {};
+    char ipStr[20] = {};
+    const char* nPtr = strstr(body, "\"name\"");
+    const char* iPtr = strstr(body, "\"ip\"");
+    if (!nPtr || !iPtr) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing name or ip");
+        return ESP_OK;
+    }
+    // Skip past ":"
+    nPtr = strchr(nPtr, ':'); if (!nPtr) goto bad_req;
+    nPtr = strchr(nPtr, '"'); if (!nPtr) goto bad_req;
+    nPtr++; // skip opening quote
+    { size_t l = 0; while (nPtr[l] && nPtr[l] != '"' && l < sizeof(name)-1) l++;
+      memcpy(name, nPtr, l); name[l] = '\0'; }
+
+    iPtr = strchr(iPtr, ':'); if (!iPtr) goto bad_req;
+    iPtr = strchr(iPtr, '"'); if (!iPtr) goto bad_req;
+    iPtr++;
+    { size_t l = 0; while (iPtr[l] && iPtr[l] != '"' && l < sizeof(ipStr)-1) l++;
+      memcpy(ipStr, iPtr, l); ipStr[l] = '\0'; }
+
+    {
+        IPAddress ip;
+        if (!ip.fromString(ipStr)) {
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid IP");
+            return ESP_OK;
+        }
+        dns->customRecords().add(name, ip);
+        dns->customRecords().save();
+        dns->flushCache();
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"ok\":true}", 11);
+    return ESP_OK;
+
+bad_req:
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Malformed JSON");
+    return ESP_OK;
+}
+
+// DELETE /api/v1/dns/records/{name} — remove a custom DNS record.
+// Returns 404 if not found, 200 {"ok":true} on success.
+esp_err_t WebUI::_handleDnsRecordsDelete(httpd_req_t* req) {
+    WebUI* self = (WebUI*)req->user_ctx;
+    if (!self->_checkDigestAuth(req)) return ESP_OK;
+
+    DnsProxy* dns = self->_dns;
+    if (!dns) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "DNS not enabled");
+        return ESP_OK;
+    }
+
+    // Extract name from URI: /api/v1/dns/records/{name}
+    const char* prefix = "/api/v1/dns/records/";
+    const char* uriName = req->uri + strlen(prefix);
+    if (!uriName || *uriName == '\0') {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing name");
+        return ESP_OK;
+    }
+
+    // URL-decode the name
+    char decoded[64] = {};
+    strncpy(decoded, uriName, sizeof(decoded) - 1);
+    _urlDecode(decoded);
+
+    if (!dns->customRecords().remove(decoded)) {
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Not found");
+        return ESP_OK;
+    }
+    dns->customRecords().save();
+    dns->flushCache();
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"ok\":true}", 11);
+    return ESP_OK;
+}
+
+// GET /api/v1/dns/cache — return DNS cache contents (no auth, diagnostic).
+esp_err_t WebUI::_handleDnsCache(httpd_req_t* req) {
+    WebUI* self = (WebUI*)req->user_ctx;
+
+    DnsProxy* dns = self->_dns;
+    if (!dns) {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, "[]", 2);
+        return ESP_OK;
+    }
+
+    const auto& entries = dns->cache().entries();
+    uint32_t now = millis();
+
+    char* buf = (char*)malloc(100 * entries.size() + 4);
+    if (!buf) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "OOM");
+        return ESP_OK;
+    }
+    size_t pos = 0;
+    buf[pos++] = '[';
+    for (size_t i = 0; i < entries.size(); i++) {
+        const DnsCacheEntry& e = entries[i];
+        if (e.expireMs < now) continue;  // skip expired
+        if (i > 0 && pos > 1) buf[pos++] = ',';
+        uint32_t ttlRemain = (e.expireMs - now) / 1000;
+        pos += snprintf(buf + pos, 100,
+                        "{\"name\":\"%s\",\"ip\":\"%s\",\"ttlRemainingS\":%u}",
+                        e.name, IPAddress(e.ip).toString().c_str(), ttlRemain);
+    }
+    buf[pos++] = ']';
+    buf[pos] = '\0';
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, buf, (int)pos);
+    free(buf);
+    return ESP_OK;
+}
+
+// ─── DNS Web UI page ──────────────────────────────────────────────────────────
+
+static const char DNS_PAGE_HTML[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+<title>EnigmaNG – DNS</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+body{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:20px;background:#1a1a2e;color:#eee}
+h1{color:#0ff;margin-bottom:5px}
+a{color:#0ae}
+.card{background:#16213e;border-radius:8px;padding:16px;border:1px solid #0f3460;margin-bottom:16px}
+.card h3{margin:0 0 12px;color:#0ff;font-size:14px;text-transform:uppercase;letter-spacing:1px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:6px 8px;text-align:left;border-bottom:1px solid #0f3460}
+th{color:#888;font-weight:normal}
+input{background:#0d1b2a;border:1px solid #0f3460;color:#eee;padding:6px 8px;border-radius:4px;font-size:13px;width:180px}
+button{background:#0ff;color:#000;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-weight:bold;font-size:13px}
+button:hover{background:#0ae}
+.del-btn{background:#c33;color:#fff}
+.del-btn:hover{background:#e44}
+#msg{padding:8px;border-radius:4px;margin-top:8px;display:none}
+.ok{background:#1a4a1a;color:#6f6} .err{background:#4a1a1a;color:#f66}
+</style>
+</head>
+<body>
+<h1>🔗 EnigmaNG – DNS Manager</h1>
+<p><a href="/">← Dashboard</a></p>
+
+<div class="card">
+  <h3>Custom DNS Records</h3>
+  <table>
+    <thead><tr><th>Hostname</th><th>IP Address</th><th></th></tr></thead>
+    <tbody id="records-body"><tr><td colspan="3">Loading...</td></tr></tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Add Record</h3>
+  <form id="add-form" onsubmit="addRecord(event)">
+    <input id="new-name" type="text" placeholder="hostname.local" required>
+    <input id="new-ip"   type="text" placeholder="192.168.1.10" required>
+    <button type="submit">Add</button>
+  </form>
+  <div id="msg"></div>
+</div>
+
+<div class="card">
+  <h3>DNS Cache</h3>
+  <table>
+    <thead><tr><th>Hostname</th><th>IP Address</th><th>TTL Remaining</th></tr></thead>
+    <tbody id="cache-body"><tr><td colspan="3">Loading...</td></tr></tbody>
+  </table>
+</div>
+
+<script>
+function showMsg(text, ok) {
+  let el = document.getElementById('msg');
+  el.textContent = text;
+  el.className = ok ? 'ok' : 'err';
+  el.style.display = 'block';
+  setTimeout(() => el.style.display = 'none', 3000);
+}
+
+async function loadRecords() {
+  try {
+    let recs = await fetch('/api/v1/dns/records').then(r => r.json());
+    let tb = document.getElementById('records-body');
+    if (!recs.length) { tb.innerHTML = '<tr><td colspan="3">No records</td></tr>'; return; }
+    tb.innerHTML = recs.map(r =>
+      '<tr><td>' + escHtml(r.name) + '</td><td>' + escHtml(r.ip) + '</td><td>' +
+      '<button class="del-btn" onclick="delRecord(\'' + escHtml(r.name) + '\')">Delete</button></td></tr>'
+    ).join('');
+  } catch(e) { console.error(e); }
+}
+
+async function loadCache() {
+  try {
+    let entries = await fetch('/api/v1/dns/cache').then(r => r.json());
+    let tb = document.getElementById('cache-body');
+    if (!entries.length) { tb.innerHTML = '<tr><td colspan="3">Empty</td></tr>'; return; }
+    tb.innerHTML = entries.map(e =>
+      '<tr><td>' + escHtml(e.name) + '</td><td>' + escHtml(e.ip) + '</td><td>' + e.ttlRemainingS + 's</td></tr>'
+    ).join('');
+  } catch(e) { console.error(e); }
+}
+
+async function addRecord(ev) {
+  ev.preventDefault();
+  let name = document.getElementById('new-name').value.trim();
+  let ip   = document.getElementById('new-ip').value.trim();
+  try {
+    let res = await fetch('/api/v1/dns/records', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, ip})
+    });
+    if (res.ok) { showMsg('Record added', true); loadRecords(); loadCache(); }
+    else        { let t = await res.text(); showMsg('Error: ' + t, false); }
+  } catch(e) { showMsg('Request failed', false); }
+}
+
+async function delRecord(name) {
+  if (!confirm('Delete record for ' + name + '?')) return;
+  try {
+    let res = await fetch('/api/v1/dns/records/' + encodeURIComponent(name), { method: 'DELETE' });
+    if (res.ok) { showMsg('Record deleted', true); loadRecords(); loadCache(); }
+    else        { let t = await res.text(); showMsg('Error: ' + t, false); }
+  } catch(e) { showMsg('Request failed', false); }
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+loadRecords();
+loadCache();
+setInterval(() => { loadRecords(); loadCache(); }, 10000);
+</script>
+</body>
+</html>
+)rawliteral";
+
+// GET /dns — DNS management web page (Digest Auth)
+esp_err_t WebUI::_handleDnsPage(httpd_req_t* req) {
+    WebUI* self = (WebUI*)req->user_ctx;
+    if (!self->_checkDigestAuth(req)) return ESP_OK;
+
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_send(req, DNS_PAGE_HTML, strlen(DNS_PAGE_HTML));
     return ESP_OK;
 }
 
