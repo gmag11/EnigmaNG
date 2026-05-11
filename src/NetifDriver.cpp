@@ -217,7 +217,8 @@ void NetifDriver::setDefaultGateway(IPAddress gw) {
     // Configure the gateway's mesh IP as the primary DNS server in lwIP so that
     // all mesh node DNS queries are directed to the gateway's DNS proxy.
     ip_addr_t gw_addr;
-    gw_addr.addr = static_cast<uint32_t>(gw);
+    gw_addr.type = IPADDR_TYPE_V4;
+    gw_addr.u_addr.ip4.addr = static_cast<uint32_t>(gw);
     dns_setserver(0, &gw_addr);
 }
 

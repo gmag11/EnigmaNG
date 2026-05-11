@@ -470,7 +470,7 @@ bool DnsProxy::begin(IPAddress meshIp) {
     if (staNif) {
         esp_netif_dns_info_t dnsInfo = {};
         if (esp_netif_get_dns_info(staNif, ESP_NETIF_DNS_MAIN, &dnsInfo) == ESP_OK) {
-            _upstreamIp = ntohl(dnsInfo.ip.addr);
+            _upstreamIp = ntohl(dnsInfo.ip.u_addr.ip4.addr);
         }
     }
 

@@ -89,7 +89,7 @@ bool Gateway::enableDns(IPAddress meshIp) {
     if (staNif) {
         esp_netif_dns_info_t dnsInfo = {};
         if (esp_netif_get_dns_info(staNif, ESP_NETIF_DNS_MAIN, &dnsInfo) == ESP_OK) {
-            _dnsProxy.setUpstreamDns(ntohl(dnsInfo.ip.addr));
+            _dnsProxy.setUpstreamDns(ntohl(dnsInfo.ip.u_addr.ip4.addr));
         }
     }
     return _dnsProxy.begin(meshIp);

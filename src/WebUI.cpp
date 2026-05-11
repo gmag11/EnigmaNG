@@ -511,8 +511,11 @@ esp_err_t WebUI::_handleDnsRecordsGet(httpd_req_t* req) {
     buf[pos++] = '[';
     for (size_t i = 0; i < recs.size(); i++) {
         if (i > 0) buf[pos++] = ',';
-        pos += snprintf(buf + pos, 80, "{\"name\":\"%s\",\"ip\":\"%s\"}",
-                        recs[i].name, recs[i].ip.toString().c_str());
+        uint32_t _ip = recs[i].ip;
+        pos += snprintf(buf + pos, 80, "{\"name\":\"%s\",\"ip\":\"%u.%u.%u.%u\"}",
+                        recs[i].name,
+                        (_ip >> 24) & 0xFF, (_ip >> 16) & 0xFF,
+                        (_ip >> 8) & 0xFF, _ip & 0xFF);
     }
     buf[pos++] = ']';
     buf[pos] = '\0';
