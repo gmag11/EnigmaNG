@@ -321,21 +321,21 @@ void MeshNetwork::loop() {
     // Onboarding updates
     _onboarding.update();
 
-    // All nodes send JOIN_BEACON every 5s (gateway) or 10s (node)
-    uint32_t beaconInterval = (_mode == MESH_GATEWAY) ? 5000 : 10000;
+    // All nodes send JOIN_BEACON every MESH_BEACON_INTERVAL_GW_MS (gateway) or MESH_BEACON_INTERVAL_NODE_MS (node)
+    uint32_t beaconInterval = (_mode == MESH_GATEWAY) ? MESH_BEACON_INTERVAL_GW_MS : MESH_BEACON_INTERVAL_NODE_MS;
     if (now - _lastBeaconMs >= beaconInterval) {
         _sendJoinBeacon();
         _lastBeaconMs = now;
     }
 
-    // All nodes send ROUTE_ADV every 30s
-    if (now - _lastRouteAdvMs >= 30000) {
+    // All nodes send ROUTE_ADV every ROUTE_ADV_INTERVAL_MS
+    if (now - _lastRouteAdvMs >= ROUTE_ADV_INTERVAL_MS) {
         _sendRouteAdv();
         _lastRouteAdvMs = now;
     }
 
-    // Check peer timeouts every 10s
-    if (now - _lastPeerCheckMs >= 10000) {
+    // Check peer timeouts every MESH_PEER_CHECK_INTERVAL_MS
+    if (now - _lastPeerCheckMs >= MESH_PEER_CHECK_INTERVAL_MS) {
         _checkPeerTimeouts();
         _lastPeerCheckMs = now;
     }
@@ -1020,10 +1020,10 @@ void MeshNetwork::_checkPeerTimeouts() {
                       timedOutMac[3], timedOutMac[4], timedOutMac[5]);
     }
 
-    // Timeout stale handshakes (10s)
+    // Timeout stale handshakes (MESH_HANDSHAKE_TIMEOUT_MS)
     for (size_t i = 0; i < MAX_HANDSHAKES; i++) {
         if (_handshakes[i].state != HandshakeState::IDLE &&
-            (now - _handshakes[i].startedAt > 10000)) {
+            (now - _handshakes[i].startedAt > MESH_HANDSHAKE_TIMEOUT_MS)) {
             _handshakes[i].state = HandshakeState::IDLE;
         }
     }

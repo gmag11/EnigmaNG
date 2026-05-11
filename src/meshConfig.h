@@ -62,4 +62,44 @@
 #define MESH8266_MAX_PROXY_OFFERS   4
 #endif
 
+// ── Timing ────────────────────────────────────────────────────────────
+// JOIN_BEACON broadcast interval
+#ifndef MESH_BEACON_INTERVAL_GW_MS
+#define MESH_BEACON_INTERVAL_GW_MS      10000
+#endif
+
+#ifndef MESH_BEACON_INTERVAL_NODE_MS
+#define MESH_BEACON_INTERVAL_NODE_MS    15000
+#endif
+
+// ROUTE_ADV unicast interval (also drives ROUTE_EXPIRE_MS = 3× in Router.h)
+#ifndef ROUTE_ADV_INTERVAL_MS
+#define ROUTE_ADV_INTERVAL_MS           30000
+#endif
+
+// Peer liveness check interval
+#ifndef MESH_PEER_CHECK_INTERVAL_MS
+#define MESH_PEER_CHECK_INTERVAL_MS     15000
+#endif
+
+// Handshake expiry
+#ifndef MESH_HANDSHAKE_TIMEOUT_MS
+#define MESH_HANDSHAKE_TIMEOUT_MS       10000
+#endif
+
+// Peer timeout: normal nodes (ms)
+#ifndef PEER_TIMEOUT_NORMAL_MS
+#define PEER_TIMEOUT_NORMAL_MS          90000UL
+#endif
+
+// Peer timeout: minimum for battery nodes (ms)
+#ifndef PEER_TIMEOUT_BATTERY_MIN_MS
+#define PEER_TIMEOUT_BATTERY_MIN_MS     120000UL
+#endif
+
+// Peer timeout: sleep interval multiplier for battery nodes
+#ifndef PEER_TIMEOUT_BATTERY_FACTOR
+#define PEER_TIMEOUT_BATTERY_FACTOR     3
+#endif
+
 #endif // MESH_CONFIG_H

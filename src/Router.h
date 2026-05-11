@@ -7,18 +7,12 @@
 #include <IPAddress.h>
 #include "meshConfig.h"
 
-#define ROUTE_ADV_INTERVAL_MS       30000   // 30s
-#define ROUTE_EXPIRE_MS             90000   // 3 × interval
+#define ROUTE_EXPIRE_MS             (3 * ROUTE_ADV_INTERVAL_MS)  // 3 × interval
 #define ROUTE_ADV_ENTRY_SIZE        12      // Bytes per entry in ROUTE_ADV frame
 #define ROUTE_ADV_MAX_ENTRIES       18      // Max entries per frame (18 × 12 = 216)
 #define SEEN_FRAME_TTL_MS           10000   // 10s
 
-// Peer timeout constants
-// Normal nodes: 3 × ROUTE_ADV_INTERVAL = 90s  (3 missed RAs)
-// Battery nodes: use their declared sleep interval × 3 + 60s margin
-#define PEER_TIMEOUT_NORMAL_MS      90000UL          // 90s
-#define PEER_TIMEOUT_BATTERY_MIN_MS 120000UL         // 120s minimum for battery nodes
-#define PEER_TIMEOUT_BATTERY_FACTOR 3                // multiplier over sleep interval
+// Peer timeout constants — tuneable via meshConfig.h
 
 // Gateway candidate entry
 struct GatewayEntry {
