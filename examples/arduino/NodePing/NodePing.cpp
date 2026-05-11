@@ -9,6 +9,7 @@
 #include <MeshNetwork.h>
 #include <lwip/sockets.h>
 #include <lwip/inet.h>
+#include <lwip/netdb.h>
 
 MeshNetwork mesh;
 
@@ -19,8 +20,9 @@ const char* PSK       = "MySecretMeshKey123";
 // Channel (must match gateway; 0 = auto-scan, not yet implemented)
 const uint8_t CHANNEL = 6;
 
-// Host to ping — typically the uplink router/gateway of the EnigmaNG gateway
-const char* PING_TARGET = "8.8.8.8";
+// Host to ping — accepts either a dotted-decimal IP ("8.8.8.8") or a hostname
+// ("google.com") so you can exercise the mesh DNS proxy end-to-end.
+const char* PING_TARGET = "google.com";
 
 // Interval between ping sweeps (ms)
 const uint32_t PING_INTERVAL_MS = 10000;
@@ -110,6 +112,31 @@ static bool pingOnce(IPAddress target, uint32_t* rttMs, uint32_t timeoutMs = 300
     return success;
 }
 
+// ─── Resolve a hostname or IP string to an IPAddress ────────────
+// Returns true and fills *out on success; false if resolution failed.
+static bool resolveHost(const char* host, IPAddress* out) {
+    // Fast path: dotted-decimal IP
+    if (out->fromString(host)) {
+        return true;
+    }
+
+    // Slow path: DNS lookup via lwIP getaddrinfo
+    struct addrinfo hints = {};
+    hints.ai_family   = AF_INET;
+    hints.ai_socktype = SOCK_RAW;
+    struct addrinfo* res = nullptr;
+    int err = getaddrinfo(host, nullptr, &hints, &res);
+    if (err != 0 || res == nullptr) {
+        Serial.printf("[DNS ] Could not resolve '%s': err=%d\n", host, err);
+        return false;
+    }
+    auto* sa = (struct sockaddr_in*)res->ai_addr;
+    *out = IPAddress(sa->sin_addr.s_addr);
+    Serial.printf("[DNS ] %s -> %s\n", host, out->toString().c_str());
+    freeaddrinfo(res);
+    return true;
+}
+
 // ─── Ping a single host, print result ────────────────────────────
 
 static void doPing(const char* label, IPAddress target) {
@@ -156,7 +183,7 @@ void setup() {
     Serial.println("[OK] Mesh node started");
     Serial.printf("     Local IP : %s\n", mesh.getLocalIP().toString().c_str());
     Serial.printf("     Channel  : %d\n", mesh.getChannel());
-    Serial.printf("     Target   : %s  (every %lu s)\n",
+    Serial.printf("     Target   : %s  (every %lu s, DNS resolved each sweep)\n",
                   PING_TARGET, (unsigned long)(PING_INTERVAL_MS / 1000));
     Serial.println();
 }
@@ -182,10 +209,10 @@ void loop() {
             Serial.println("[Ping] Gateway IP unknown — skipping gateway ping");
         }
 
-        // 2. Ping LAN target (verifies end-to-end: mesh0 → NAT → LAN)
+        // 2. Ping configured target (IP or hostname — verifies end-to-end: mesh0 → NAT → DNS → LAN)
         IPAddress target;
-        if (!target.fromString(PING_TARGET)) {
-            Serial.printf("[Ping] Invalid target: %s\n", PING_TARGET);
+        if (!resolveHost(PING_TARGET, &target)) {
+            Serial.printf("[Ping] Could not resolve target: %s\n", PING_TARGET);
             return;
         }
         doPing(PING_TARGET, target);
