@@ -4,8 +4,11 @@
 #if !defined(ESP8266)
 
 #include <Arduino.h>
+#include "esp_netif.h"
 
-struct netif;  // forward declaration (lwIP)
+// Internal driver handle — defined in NetifDriver.cpp
+struct MeshNetifDriverHandle;
+struct netif;
 
 class NetifDriver {
 public:
@@ -24,13 +27,15 @@ public:
     typedef bool (*TxCallback)(const uint8_t* data, size_t len, void* ctx);
     void setTxCallback(TxCallback cb, void* ctx);
 
-    // Called from the lwIP output function
+    // Called by the lwIP output function via esp_netif transmit
     bool txCallback(const uint8_t* data, size_t len);
 
 private:
-    struct netif* _lwipNetif = nullptr;
-    TxCallback _txCb = nullptr;
-    void* _txCtx = nullptr;
+    esp_netif_t*           _espNetif     = nullptr;
+    struct netif*          _lwipNetif    = nullptr;  // cached from esp_netif_get_netif_impl()
+    MeshNetifDriverHandle* _driverHandle = nullptr;
+    TxCallback             _txCb         = nullptr;
+    void*                  _txCtx        = nullptr;
 };
 
 #endif // !ESP8266
