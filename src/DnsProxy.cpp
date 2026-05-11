@@ -6,6 +6,7 @@
 #include "esp_netif.h"
 
 #include <lwip/sockets.h>
+#include <fcntl.h>
 #include <cstring>
 #include <cctype>
 #include <cstdio>
@@ -418,18 +419,27 @@ bool DnsProxy::relayToUpstream(const uint8_t* queryPacket, size_t queryLen,
     responseLen = 0;
     if (!queryPacket || queryLen == 0 || upstreamIp == 0) return false;
 
-    int sock = lwip_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock < 0) return false;
+    IPAddress up(upstreamIp >> 24, (upstreamIp >> 16) & 0xFF,
+                 (upstreamIp >> 8) & 0xFF, upstreamIp & 0xFF);
+    Serial.printf("[DNS] relay → upstream %s\n", up.toString().c_str());
+
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock < 0) {
+        Serial.printf("[DNS] relay: socket() failed errno=%d\n", errno);
+        return false;
+    }
+    fcntl(sock, F_SETFL, O_NONBLOCK);
 
     struct sockaddr_in upstream = {};
     upstream.sin_family = AF_INET;
     upstream.sin_port   = htons(DNS_PORT);
     upstream.sin_addr.s_addr = htonl(upstreamIp);
 
-    ssize_t sent = lwip_sendto(sock, queryPacket, queryLen, 0,
-                               (struct sockaddr*)&upstream, sizeof(upstream));
+    ssize_t sent = sendto(sock, queryPacket, queryLen, 0,
+                          (struct sockaddr*)&upstream, sizeof(upstream));
     if (sent < 0 || (size_t)sent != queryLen) {
-        lwip_close(sock);
+        Serial.printf("[DNS] relay: sendto() failed errno=%d\n", errno);
+        close(sock);
         return false;
     }
 
@@ -438,20 +448,25 @@ bool DnsProxy::relayToUpstream(const uint8_t* queryPacket, size_t queryLen,
     FD_ZERO(&fds);
     FD_SET(sock, &fds);
     struct timeval tv = { .tv_sec = 2, .tv_usec = 0 };
-    int ready = lwip_select(sock + 1, &fds, nullptr, nullptr, &tv);
+    int ready = select(sock + 1, &fds, nullptr, nullptr, &tv);
     if (ready <= 0) {
-        lwip_close(sock);
+        Serial.println("[DNS] relay: timeout waiting for upstream response");
+        close(sock);
         return false;
     }
 
     struct sockaddr_in from = {};
     socklen_t fromLen = sizeof(from);
-    ssize_t rcvd = lwip_recvfrom(sock, responseBuf, responseBufLen, 0,
-                                  (struct sockaddr*)&from, &fromLen);
-    lwip_close(sock);
-    if (rcvd <= 0) return false;
+    ssize_t rcvd = recvfrom(sock, responseBuf, responseBufLen, 0,
+                             (struct sockaddr*)&from, &fromLen);
+    close(sock);
+    if (rcvd <= 0) {
+        Serial.printf("[DNS] relay: recvfrom() failed errno=%d\n", errno);
+        return false;
+    }
 
     responseLen = (size_t)rcvd;
+    Serial.printf("[DNS] relay: got %d byte response\n", (int)rcvd);
     return true;
 }
 
@@ -473,25 +488,45 @@ bool DnsProxy::begin(IPAddress meshIp) {
             _upstreamIp = ntohl(dnsInfo.ip.u_addr.ip4.addr);
         }
     }
+    if (_upstreamIp) {
+        IPAddress up(_upstreamIp >> 24, (_upstreamIp >> 16) & 0xFF,
+                     (_upstreamIp >> 8) & 0xFF, _upstreamIp & 0xFF);
+        Serial.printf("[DNS] Upstream DNS: %s\n", up.toString().c_str());
+    } else {
+        Serial.println("[DNS] WARNING: upstream DNS not available yet (WiFi uplink not connected)");
+    }
 
-    // Create UDP socket bound to meshIp:53
-    _sock = lwip_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    // Create UDP socket using POSIX API (not lwip_socket directly) so that
+    // ESP-IDF's VFS layer routes packets correctly under IP_NAPT — this matches
+    // the approach used by EthWiFiManager's working DNS proxy.
+    _sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (_sock < 0) {
         Serial.println("[DNS] ERROR: failed to create socket");
         return false;
     }
 
+    // SO_REUSEADDR: allow rapid restart without "address already in use"
+    int reuseFlag = 1;
+    setsockopt(_sock, SOL_SOCKET, SO_REUSEADDR, &reuseFlag, sizeof(reuseFlag));
+
+    // O_NONBLOCK: use select() in the loop rather than blocking recvfrom()
+    fcntl(_sock, F_SETFL, O_NONBLOCK);
+
     struct sockaddr_in addr = {};
     addr.sin_family      = AF_INET;
     addr.sin_port        = htons(DNS_PORT);
-    addr.sin_addr.s_addr = htonl((uint32_t)meshIp);
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    if (lwip_bind(_sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        Serial.println("[DNS] ERROR: failed to bind socket");
-        lwip_close(_sock);
+    Serial.printf("[DNS] Binding socket fd=%d to INADDR_ANY:%d\n", _sock, DNS_PORT);
+
+    if (bind(_sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        Serial.printf("[DNS] ERROR: bind(INADDR_ANY) failed errno=%d\n", errno);
+        close(_sock);
         _sock = -1;
         return false;
     }
+
+    Serial.printf("[DNS] Socket bound (fd=%d)\n", _sock);
 
     _running = true;
 
@@ -507,9 +542,9 @@ void DnsProxy::stop() {
     if (!_running) return;
     _running = false;
 
-    // Close socket to unblock recvfrom()
+    // Close socket to unblock select()
     if (_sock >= 0) {
-        lwip_close(_sock);
+        close(_sock);
         _sock = -1;
     }
 
@@ -536,11 +571,35 @@ void DnsProxy::_runLoop() {
     struct sockaddr_in client;
     socklen_t clientLen = sizeof(client);
 
+    Serial.printf("[DNS] _runLoop started (sock=%d, running=%d)\n", _sock, (int)_running);
+
+    uint32_t loopCount = 0;
     while (_running) {
-        ssize_t len = lwip_recvfrom(_sock, pkt, sizeof(pkt), 0,
-                                    (struct sockaddr*)&client, &clientLen);
-        if (!_running) break;  // stop() was called
+        fd_set readSet;
+        FD_ZERO(&readSet);
+        FD_SET(_sock, &readSet);
+        struct timeval tv = { 5, 0 };  // 5s timeout for alive log
+        int ready = select(_sock + 1, &readSet, nullptr, nullptr, &tv);
+
+        if (!_running) break;
+
+        if (ready <= 0) {
+            // Timeout — print alive marker
+            if (++loopCount % 1 == 0) {
+                Serial.printf("[DNS] task alive (waits=%lu, no pkts)\n",
+                              (unsigned long)loopCount);
+            }
+            continue;
+        }
+
+        ssize_t len = recvfrom(_sock, pkt, sizeof(pkt), 0,
+                               (struct sockaddr*)&client, &clientLen);
         if (len <= 0) continue;
+
+        char srcIp[20] = "?";
+        IPAddress(ntohl(client.sin_addr.s_addr)).toString().toCharArray(srcIp, sizeof(srcIp));
+        Serial.printf("[DNS] pkt %d bytes from %s:%d\n",
+                      (int)len, srcIp, ntohs(client.sin_port));
 
         _processQuery(pkt, (size_t)len, (struct sockaddr*)&client, clientLen);
     }
@@ -551,6 +610,14 @@ void DnsProxy::_processQuery(const uint8_t* pkt, size_t len,
     uint16_t txId = 0;
     char name[DNS_CACHE_NAME_LEN] = {};
 
+    // Log client IP
+    char clientIpStr[20] = "?";
+    if (client) {
+        const struct sockaddr_in* sa = (const struct sockaddr_in*)client;
+        IPAddress cip(ntohl(sa->sin_addr.s_addr));
+        cip.toString().toCharArray(clientIpStr, sizeof(clientIpStr));
+    }
+
     // Parse query — non-A/IN queries get NOERROR empty answer
     if (!parseQuery(pkt, len, txId, name, sizeof(name))) {
         // Re-extract txId for the error response
@@ -559,10 +626,29 @@ void DnsProxy::_processQuery(const uint8_t* pkt, size_t len,
         if (len >= DNS_HEADER_LEN) {
             _decodeName(pkt, len, DNS_HEADER_LEN, name, sizeof(name));
         }
+        Serial.printf("[DNS] query from %s: '%s' (non-A/IN) → NOERROR empty\n", clientIpStr, name);
         uint8_t resp[DNS_MAX_PACKET];
         size_t respLen = buildNoerrorEmpty(resp, sizeof(resp), txId, name);
-        if (respLen > 0) lwip_sendto(_sock, resp, respLen, 0, client, clientLen);
+        if (respLen > 0) sendto(_sock, resp, respLen, 0, client, clientLen);
         return;
+    }
+
+    Serial.printf("[DNS] query from %s: '%s'\n", clientIpStr, name);
+
+    // If upstream DNS not yet known, try to refresh it from the STA netif now
+    if (_upstreamIp == 0) {
+        esp_netif_t* staNif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        if (staNif) {
+            esp_netif_dns_info_t dnsInfo = {};
+            if (esp_netif_get_dns_info(staNif, ESP_NETIF_DNS_MAIN, &dnsInfo) == ESP_OK) {
+                _upstreamIp = ntohl(dnsInfo.ip.u_addr.ip4.addr);
+                if (_upstreamIp) {
+                    IPAddress up(_upstreamIp >> 24, (_upstreamIp >> 16) & 0xFF,
+                                 (_upstreamIp >> 8) & 0xFF, _upstreamIp & 0xFF);
+                    Serial.printf("[DNS] upstream DNS refreshed: %s\n", up.toString().c_str());
+                }
+            }
+        }
     }
 
     // Lookup priority: custom records → cache → upstream relay
@@ -572,24 +658,30 @@ void DnsProxy::_processQuery(const uint8_t* pkt, size_t len,
     uint32_t ip = _customRecords.lookup(name);
     if (ip) {
         // Custom record match — respond immediately, no upstream
+        IPAddress resolved(ip >> 24, (ip >> 16) & 0xFF, (ip >> 8) & 0xFF, ip & 0xFF);
+        Serial.printf("[DNS] '%s' → %s (custom record)\n", name, resolved.toString().c_str());
         respLen = buildAResponse(resp, sizeof(resp), txId, name, ip, 3600);
     } else {
         ip = _cache.lookup(name);
         if (ip) {
             // Cache hit
+            IPAddress resolved(ip >> 24, (ip >> 16) & 0xFF, (ip >> 8) & 0xFF, ip & 0xFF);
+            Serial.printf("[DNS] '%s' → %s (cache hit)\n", name, resolved.toString().c_str());
             respLen = buildAResponse(resp, sizeof(resp), txId, name, ip, DNS_MIN_TTL_FLOOR_S);
         } else {
             // Relay to upstream
+            if (_upstreamIp == 0) {
+                Serial.printf("[DNS] '%s' → SERVFAIL (no upstream DNS configured)\n", name);
+            }
             uint8_t upstreamResp[DNS_MAX_PACKET];
             size_t  upstreamLen = 0;
             if (_upstreamIp && relayToUpstream(pkt, len, _upstreamIp,
                                                upstreamResp, sizeof(upstreamResp),
                                                upstreamLen)) {
                 // Forward upstream response directly to client
-                lwip_sendto(_sock, upstreamResp, upstreamLen, 0, client, clientLen);
+                sendto(_sock, upstreamResp, upstreamLen, 0, client, clientLen);
 
-                // Cache the answer from upstream response
-                // Parse first A record from upstream response to cache it
+                // Parse first A record from upstream response for logging + caching
                 if (upstreamLen >= DNS_HEADER_LEN + 2) {
                     uint16_t anCount = ((uint16_t)upstreamResp[6] << 8) | upstreamResp[7];
                     if (anCount > 0) {
@@ -634,6 +726,11 @@ void DnsProxy::_processQuery(const uint8_t* pkt, size_t len,
                                                    ((uint32_t)upstreamResp[pos+1] << 16) |
                                                    ((uint32_t)upstreamResp[pos+2] << 8)  |
                                                                upstreamResp[pos+3];
+                                    IPAddress resolved(rip >> 24, (rip >> 16) & 0xFF,
+                                                       (rip >> 8) & 0xFF, rip & 0xFF);
+                                    Serial.printf("[DNS] '%s' → %s (upstream, TTL=%lu)\n",
+                                                  name, resolved.toString().c_str(),
+                                                  (unsigned long)rttl);
                                     _cache.insert(name, rip, rttl);
                                 }
                             }
@@ -643,13 +740,14 @@ void DnsProxy::_processQuery(const uint8_t* pkt, size_t len,
                 return; // already sent upstream response
             } else {
                 // Upstream failed — return SERVFAIL
+                Serial.printf("[DNS] '%s' → SERVFAIL (upstream relay failed)\n", name);
                 respLen = buildServfail(resp, sizeof(resp), txId, name);
             }
         }
     }
 
     if (respLen > 0) {
-        lwip_sendto(_sock, resp, respLen, 0, client, clientLen);
+        sendto(_sock, resp, respLen, 0, client, clientLen);
     }
 }
 

@@ -185,6 +185,18 @@ void NetifDriver::stop() {
 bool NetifDriver::injectRxPacket(const uint8_t* data, size_t len) {
     if (!_lwipNetif) return false;
 
+    // Log UDP/53 packets for DNS debugging
+    if (len >= 28 && data[9] == 17) { // protocol=UDP
+        uint8_t proto = data[9];
+        IPAddress src(data[12], data[13], data[14], data[15]);
+        IPAddress dst(data[16], data[17], data[18], data[19]);
+        uint16_t dport = (uint16_t)(data[22] << 8 | data[23]);
+        if (dport == 53) {
+            Serial.printf("[NetIF] inject UDP/53: %s -> %s len=%d\n",
+                          src.toString().c_str(), dst.toString().c_str(), (int)len);
+        }
+    }
+
     // PBUF_LINK reserves PBUF_LINK_HLEN (14 bytes) of headroom before the
     // payload.  When NAPT forwards a packet from mesh0 to the WiFi STA (an
     // Ethernet netif), ethernet_output() prepends a 14-byte Ethernet header
@@ -220,6 +232,7 @@ void NetifDriver::setDefaultGateway(IPAddress gw) {
     gw_addr.type = IPADDR_TYPE_V4;
     gw_addr.u_addr.ip4.addr = static_cast<uint32_t>(gw);
     dns_setserver(0, &gw_addr);
+    Serial.printf("[NetIF] DNS server set to %s\n", gw.toString().c_str());
 }
 
 void NetifDriver::setTxCallback(TxCallback cb, void* ctx) {

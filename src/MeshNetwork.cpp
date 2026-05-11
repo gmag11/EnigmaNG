@@ -753,6 +753,13 @@ void MeshNetwork::_handleData(const uint8_t* srcMac, const MeshFrameHeader& hdr,
 
     // Deliver IPv4 packets to local lwIP stack via mesh0 netif
     if ((isForUs || isBroadcast) && (Protocol)hdr.protocol == Protocol::IPv4 && len >= 20) {
+        // Log UDP/53 to help diagnose DNS routing
+        if (len >= 28 && payload[9] == 17) {
+            uint16_t dport = (uint16_t)(payload[22] << 8 | payload[23]);
+            if (dport == 53) {
+                Serial.printf("[Mesh] rx IPv4/UDP dst_port=53 len=%d -> inject\n", (int)len);
+            }
+        }
         _netifDrv.injectRxPacket(payload, len);
     }
 

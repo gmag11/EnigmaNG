@@ -4,6 +4,9 @@
 
 #include <Arduino.h>
 #include <MeshNetwork.h>
+#include <WiFi.h>
+#include <lwip/dns.h>
+#include <lwip/netdb.h>
 
 MeshNetwork mesh;
 
@@ -83,9 +86,64 @@ void loop() {
     static uint32_t lastStatus = 0;
     if (millis() - lastStatus > 15000) {
         lastStatus = millis();
-        Serial.printf("[Gateway] Nodes: %d | Heap: %lu | Uptime: %lus\n",
+
+        // Log upstream DNS server(s) and test resolution
+        bool hasUplink = (WiFi.status() == WL_CONNECTED);
+        const ip_addr_t* dns0 = dns_getserver(0);
+        char dns0str[20] = "none";
+        if (dns0 && !ip_addr_isany(dns0)) ip4addr_ntoa_r(&dns0->u_addr.ip4, dns0str, sizeof(dns0str));
+
+        Serial.printf("[Gateway] Nodes: %d | Heap: %lu | Uptime: %lus | uplink=%s | upstream-dns=%s\n",
                       mesh.getNodeCount(),
                       (unsigned long)ESP.getFreeHeap(),
-                      (unsigned long)(millis() / 1000));
+                      (unsigned long)(millis() / 1000),
+                      hasUplink ? "YES" : "no",
+                      dns0str);
+
+        if (hasUplink) {
+            // Test upstream DNS path: gateway resolves a hostname directly via STA
+            struct addrinfo hints = {};
+            hints.ai_family   = AF_INET;
+            hints.ai_socktype = SOCK_DGRAM;
+            struct addrinfo* res = nullptr;
+            int err = getaddrinfo("google.com", nullptr, &hints, &res);
+            if (err == 0 && res) {
+                auto* sa = (struct sockaddr_in*)res->ai_addr;
+                IPAddress resolved(sa->sin_addr.s_addr);
+                Serial.printf("[DNS-GW] google.com -> %s (upstream OK)\n", resolved.toString().c_str());
+                freeaddrinfo(res);
+            } else {
+                Serial.printf("[DNS-GW] google.com -> FAILED err=%d (upstream not working!)\n", err);
+            }
+
+            // Self-test: send a UDP packet to our own mesh IP:53 and verify the
+            // DNS proxy socket receives it.  This proves local UDP delivery works.
+            static bool selfTestDone = false;
+            if (!selfTestDone) {
+                selfTestDone = true;
+                IPAddress meshIP = mesh.getLocalIP();
+                Serial.printf("[DNS-GW] self-test: sending UDP to %s:53\n", meshIP.toString().c_str());
+                int ts = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+                if (ts >= 0) {
+                    struct sockaddr_in dst = {};
+                    dst.sin_family = AF_INET;
+                    dst.sin_port   = htons(53);
+                    dst.sin_addr.s_addr = (uint32_t)meshIP;
+                    // Minimal DNS-like payload (txID + standard query flags + 1 question)
+                    uint8_t probe[] = { 0xAB, 0xCD, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
+                                        0x00, 0x00, 0x00, 0x00,
+                                        0x04, 't','e','s','t', 0x00, 0x00, 0x01, 0x00, 0x01 };
+                    int sent = sendto(ts, probe, sizeof(probe), 0,
+                                      (struct sockaddr*)&dst, sizeof(dst));
+                    Serial.printf("[DNS-GW] self-test: sendto() = %d (expected %d)\n",
+                                  sent, (int)sizeof(probe));
+                    close(ts);
+                    // The DNS task should log "[DNS] pkt 22 bytes from 10.200.x.x" if
+                    // the packet is delivered. Wait a tick and check indirectly via heap.
+                } else {
+                    Serial.printf("[DNS-GW] self-test: socket() failed errno=%d\n", errno);
+                }
+            }
+        }
     }
 }
